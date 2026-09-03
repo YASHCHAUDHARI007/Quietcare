@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { analyzePrescriptionWithGemini } from "@/lib/server/gemini";
 import { QuietcareRepository } from "@/lib/server/repository";
+import { ReminderService } from "@/lib/server/reminders";
+import { calculateCoverage, generateDosePacks } from "@/lib/routine";
 import type { PrescriptionRecord } from "@/types/quietcare";
 
 export async function GET() {
@@ -26,6 +28,7 @@ export async function POST(req: Request) {
     let base64Data: string | undefined;
     let mimeType = "image/jpeg";
     let fileSizeBytes = 0;
+    let isDemo = false;
 
     const contentType = req.headers.get("content-type") || "";
 
@@ -39,17 +42,31 @@ export async function POST(req: Request) {
         const buffer = await file.arrayBuffer();
         base64Data = Buffer.from(buffer).toString("base64");
       }
+      if (formData.get("isDemo") === "true") {
+        isDemo = true;
+      }
     } else {
       const json = await req.json().catch(() => ({}));
       if (json.fileName) fileName = json.fileName;
       if (json.base64Data) base64Data = json.base64Data;
       if (json.mimeType) mimeType = json.mimeType;
       if (json.fileSizeBytes) fileSizeBytes = Number(json.fileSizeBytes) || 0;
+      if (json.isDemo) isDemo = Boolean(json.isDemo);
     }
 
-    const ocrResult = await analyzePrescriptionWithGemini(base64Data, mimeType, fileSizeBytes);
+    const ocrResult = await analyzePrescriptionWithGemini(
+      base64Data,
+      mimeType,
+      fileSizeBytes,
+      isDemo
+    );
 
     const hasUncertain = ocrResult.medicines.some((m) => m.uncertain);
+
+    // If actual base64 data was supplied, use it for preview; otherwise use default asset
+    const imageUrl = base64Data
+      ? `data:${mimeType};base64,${base64Data}`
+      : "/assets/images/prescription.png";
 
     const newPrescription: PrescriptionRecord = {
       id: `rx_${Date.now()}`,
@@ -60,7 +77,7 @@ export async function POST(req: Request) {
       courseDays: ocrResult.courseDays,
       medicinesFound: ocrResult.medicines.length,
       status: hasUncertain ? "review-needed" : "verified",
-      imageUrl: "/assets/images/prescription.png",
+      imageUrl,
       ocrConfidence: ocrResult.confidence,
       ocrSource: ocrResult.source,
       uncertainNotice: ocrResult.uncertainItemNotice,
@@ -70,7 +87,14 @@ export async function POST(req: Request) {
       const logSourceNotice =
         ocrResult.source === "gemini-3.8-flash"
           ? "via Gemini 3.8 Flash multimodal AI"
-          : "using clinical demo fallback (API key not configured)";
+          : "using clinical demo mode";
+
+      const coverage = calculateCoverage(ocrResult.medicines);
+      const dosePacks = generateDosePacks(
+        ocrResult.medicines,
+        prev.routine.breakfastTime,
+        prev.routine.dinnerTime
+      );
 
       return {
         ...prev,
@@ -78,8 +102,14 @@ export async function POST(req: Request) {
           ...prev.patient,
           prescriptionName: ocrResult.patientName,
           courseDays: ocrResult.courseDays,
+          availableDays: coverage,
         },
         medicines: ocrResult.medicines,
+        routine: {
+          ...prev.routine,
+          coverageDays: coverage,
+          dosePacks,
+        },
         prescriptions: [newPrescription, ...prev.prescriptions],
         activityLogs: [
           {
@@ -93,6 +123,8 @@ export async function POST(req: Request) {
         ],
       };
     });
+
+    await ReminderService.syncTodayDosesFromRoutine(false);
 
     return NextResponse.json({
       success: true,
@@ -109,3 +141,4 @@ export async function POST(req: Request) {
     );
   }
 }
+

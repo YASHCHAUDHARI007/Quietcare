@@ -64,7 +64,10 @@ export async function updateDoseStatusApi(
   }
 }
 
-export async function uploadPrescriptionFile(file?: File): Promise<{
+export async function uploadPrescriptionFile(
+  file?: File,
+  isDemo: boolean = false
+): Promise<{
   success: boolean;
   medicines?: Medicine[];
   prescription?: PrescriptionRecord;
@@ -84,6 +87,9 @@ export async function uploadPrescriptionFile(file?: File): Promise<{
     if (file) {
       const formData = new FormData();
       formData.append("file", file);
+      if (isDemo) {
+        formData.append("isDemo", "true");
+      }
       const res = await fetch("/api/prescriptions", {
         method: "POST",
         body: formData,
@@ -102,7 +108,7 @@ export async function uploadPrescriptionFile(file?: File): Promise<{
       const res = await fetch("/api/prescriptions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileName: "prescription.png" }),
+        body: JSON.stringify({ fileName: "prescription.png", isDemo }),
       });
       const json = await res.json();
       if (res.ok && json.success) {
@@ -118,6 +124,97 @@ export async function uploadPrescriptionFile(file?: File): Promise<{
   } catch (err: unknown) {
     const error = err instanceof Error ? err.message : "Network error";
     return { success: false, error };
+  }
+}
+
+export async function saveMedicinesList(
+  medicines: Medicine[]
+): Promise<{ success: boolean; medicines?: Medicine[]; error?: string }> {
+  try {
+    const res = await fetch("/api/medicines", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ medicines }),
+    });
+    const json = await res.json();
+    return {
+      success: res.ok && json.success,
+      medicines: json.medicines,
+      error: json.error,
+    };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to save medicines",
+    };
+  }
+}
+
+export async function createMedicine(
+  medicine: Partial<Medicine>
+): Promise<{ success: boolean; medicine?: Medicine; medicines?: Medicine[]; error?: string }> {
+  try {
+    const res = await fetch("/api/medicines", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ medicine }),
+    });
+    const json = await res.json();
+    return {
+      success: res.ok && json.success,
+      medicine: json.medicine,
+      medicines: json.medicines,
+      error: json.error,
+    };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to add medicine",
+    };
+  }
+}
+
+export async function updateMedicine(
+  medicine: Partial<Medicine> & { id: string }
+): Promise<{ success: boolean; medicines?: Medicine[]; error?: string }> {
+  try {
+    const res = await fetch("/api/medicines", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(medicine),
+    });
+    const json = await res.json();
+    return {
+      success: res.ok && json.success,
+      medicines: json.medicines,
+      error: json.error,
+    };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to update medicine",
+    };
+  }
+}
+
+export async function deleteMedicine(
+  id: string
+): Promise<{ success: boolean; medicines?: Medicine[]; error?: string }> {
+  try {
+    const res = await fetch(`/api/medicines?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    const json = await res.json();
+    return {
+      success: res.ok && json.success,
+      medicines: json.medicines,
+      error: json.error,
+    };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to delete medicine",
+    };
   }
 }
 
@@ -161,22 +258,30 @@ export async function updateMedicineQuantity(
 export async function saveRoutineSettings(
   language: string,
   breakfast: string,
-  dinner: string
-): Promise<{ success: boolean; coverageDays?: number }> {
+  dinner: string,
+  patientName?: string
+): Promise<{ success: boolean; coverageDays?: number; patientName?: string; error?: string }> {
   try {
     const res = await fetch("/api/routine", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ language, breakfast, dinner }),
+      body: JSON.stringify({ language, breakfast, dinner, patientName }),
     });
-    if (res.ok) {
-      const json = await res.json();
-      return { success: true, coverageDays: json.coverageDays };
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return {
+        success: true,
+        coverageDays: json.coverageDays,
+        patientName: json.patientName,
+      };
     }
-  } catch {
-    // fallback
+    return { success: false, error: json.error || "Failed to save routine" };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Network error saving routine",
+    };
   }
-  return { success: false };
 }
 
 export async function fetchTelegramStatus(): Promise<{

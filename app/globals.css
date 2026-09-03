@@ -567,5 +567,190 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   margin-top: 4px;
 }
 
+.medicine-review-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+
+.med-flatlay-box {
+  position: relative;
+  height: 220px;
+  width: 100%;
+  background: #a77d50;
+  overflow: hidden;
+  border-radius: 14px;
+  flex-shrink: 0;
+  margin-bottom: 14px;
+}
+
+.med-flatlay-box img {
+  object-fit: cover;
+}
+
+.medicine-item-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-2);
+  border-radius: 12px;
+  margin-bottom: 8px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.medicine-item-card:hover {
+  border-color: #cbd5e1;
+}
+
+.medicine-item-card--uncertain {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.med-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.med-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.med-card-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.med-badge-schedule {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.med-badge-uncertain {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #fed7aa;
+  color: #c2410c;
+}
+
+.med-card-meta {
+  font-size: 11px;
+  color: var(--color-text-2);
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.med-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+}
+
+.med-btn-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--color-border-2);
+  background: white;
+  color: var(--color-text-2);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.med-btn-icon:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.med-btn-icon--danger:hover {
+  background: #fef2f2;
+  color: #ef4444;
+  border-color: #fca5a5;
+}
+
+.add-medicine-dashed {
+  width: 100%;
+  height: 44px;
+  border: 1.5px dashed var(--color-border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--color-text-2);
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  margin-top: 4px;
+  margin-bottom: 16px;
+  transition: all 0.15s;
+}
+
+.add-medicine-dashed:hover {
+  background: #f8fafc;
+  color: var(--color-text);
+  border-color: #94a3b8;
+}
+
+.toast-banner {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  right: 16px;
+  z-index: 50;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from { transform: translateY(-10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.toast-banner--error {
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  color: #991b1b;
+}
+
+.toast-banner--success {
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  color: #166534;
+}
+
+.toast-banner--info {
+  background: #e0f2fe;
+  border: 1px solid #7dd3fc;
+  color: #075985;
+}
+
 @media (max-height: 720px) { .welcome-photo{height:250px}.brand-mark{width:92px;height:92px}.brand-mark img{width:78px;height:78px}.choice-illustration{height:250px}.choice-illustration img{height:245px}.capture-art{top:43%} }
 @media (prefers-reduced-motion: reduce) { .spinner{animation:none}.button{transition:none} }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { calculateCoverage } from "@/lib/routine";
+import { calculateCoverage, generateDosePacks } from "@/lib/routine";
 import { QuietcareRepository } from "@/lib/server/repository";
 import { ReminderService } from "@/lib/server/reminders";
 
@@ -24,54 +24,22 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { language, breakfast, dinner } = body;
+    const { language, breakfast, dinner, patientName } = body;
 
     const updatedState = await QuietcareRepository.updateState((prev) => {
       const coverage = calculateCoverage(prev.medicines);
       const chosenLang = language || prev.routine.language || "Marathi";
       const bTime = breakfast || prev.routine.breakfastTime || "8:00 am";
       const dTime = dinner || prev.routine.dinnerTime || "7:30 pm";
+      const name = patientName ? String(patientName).trim() : prev.patient.name;
 
-      const dosePacks = [
-        {
-          packetNumber: 1,
-          timingLabel: "Before Breakfast",
-          mealRelation: `30 mins before breakfast (${bTime})`,
-          medicines: [
-            { name: "Pantop 40mg", dose: "1 tablet", instruction: "Take with water" },
-          ],
-        },
-        {
-          packetNumber: 2,
-          timingLabel: "After Breakfast",
-          mealRelation: `Within 15 mins after breakfast (${bTime})`,
-          medicines: [
-            { name: "Vertin 2mg", dose: "1 tablet", instruction: "Do not crush" },
-            { name: "Metformin 500mg", dose: "1 tablet", instruction: "Take after meal" },
-          ],
-        },
-        {
-          packetNumber: 3,
-          timingLabel: "Before Dinner",
-          mealRelation: `15 mins before dinner (${dTime})`,
-          medicines: [
-            { name: "Telma 40mg", dose: "1 tablet", instruction: "Blood pressure support" },
-          ],
-        },
-        {
-          packetNumber: 4,
-          timingLabel: "After Dinner",
-          mealRelation: `After dinner (${dTime}) before bedtime`,
-          medicines: [
-            { name: "Vertin 2mg", dose: "1 tablet", instruction: "Night dose" },
-          ],
-        },
-      ];
+      const dosePacks = generateDosePacks(prev.medicines, bTime, dTime);
 
       return {
         ...prev,
         patient: {
           ...prev.patient,
+          name,
           availableDays: coverage,
           preparedThrough: `${coverage} days ahead`,
         },
@@ -89,20 +57,21 @@ export async function POST(req: Request) {
             timestamp: new Date().toISOString(),
             type: "routine_created",
             title: `Routine personalized (${chosenLang})`,
-            description: `Configured meal timings (${bTime} / ${dTime}). ${coverage} days coverage ready.`,
+            description: `Configured meal timings (${bTime} / ${dTime}) for ${name}. ${coverage} days coverage ready.`,
           },
           ...prev.activityLogs,
         ],
       };
     });
 
-    // Ensure today's doses are synced with meal times
-    await ReminderService.syncTodayDosesFromRoutine();
+    // Ensure today's doses are synced with updated meal times
+    await ReminderService.syncTodayDosesFromRoutine(false);
 
     return NextResponse.json({
       success: true,
       routine: updatedState.routine,
       coverageDays: updatedState.routine.coverageDays,
+      patientName: updatedState.patient.name,
     });
   } catch (error) {
     console.error("[API routine POST] Error:", error);
@@ -112,3 +81,4 @@ export async function POST(req: Request) {
     );
   }
 }
+
