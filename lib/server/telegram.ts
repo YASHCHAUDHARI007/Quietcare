@@ -180,7 +180,7 @@ export class TelegramService {
    * Generates a secure, short-lived deep link for the parent to connect their Telegram.
    */
   static async createConnectLink(
-    patientId: string = "patient_meena"
+    patientId: string = "patient_primary"
   ): Promise<{ token: string; deepLink: string; botUsername: string }> {
     const tokenRecord = await QuietcareRepository.createPendingToken(patientId);
     const botInfo = await this.getBotInfo();

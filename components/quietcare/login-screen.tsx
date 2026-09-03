@@ -2,14 +2,15 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import { User, Activity, ArrowRight } from "lucide-react";
 
 type LoginScreenProps = {
-  onLoginSuccess: (user: { username: string; name: string }) => void;
+  onLoginSuccess: (user: { username: string; name: string; role: "caregiver" | "patient" }) => void;
   serverLive?: boolean;
 };
 
 export function LoginScreen({ onLoginSuccess, serverLive = true }: LoginScreenProps) {
-  // Pre-fill with demo credentials so it works immediately without any typing
+  const [selectedRole, setSelectedRole] = useState<"caregiver" | "patient">("patient");
   const [username, setUsername] = useState("test");
   const [password, setPassword] = useState("test");
   const [showPassword, setShowPassword] = useState(false);
@@ -17,106 +18,104 @@ export function LoginScreen({ onLoginSuccess, serverLive = true }: LoginScreenPr
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const handleDirectDemoLogin = () => {
-    setError(null);
-    if (rememberMe && typeof window !== "undefined") {
-      try {
-        localStorage.setItem("quietcare_auth", "true");
-      } catch {
-        // Ignore
-      }
-    }
-    onLoginSuccess({ username: "test", name: "Caregiver Demo" });
-  };
-
-  const handleAutofill = () => {
-    setUsername("test");
-    setPassword("test");
-    setError(null);
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    setLoading(true);
 
-    const rawUser = username.trim();
-    const rawPass = password.trim();
+    const cleanUser = username.trim();
+    const cleanPass = password.trim();
 
-    // Default to "test" / "test" if user submitted with empty inputs
-    const cleanUser = rawUser || "test";
-    const cleanPass = rawPass || "test";
-
-    const lowerUser = cleanUser.toLowerCase();
-    const lowerPass = cleanPass.toLowerCase();
-
-    // Direct client bypass for demo credentials
-    if ((lowerUser === "test" && lowerPass === "test") || (!rawUser && !rawPass)) {
-      if (rememberMe && typeof window !== "undefined") {
-        try {
-          localStorage.setItem("quietcare_auth", "true");
-        } catch {
-          // Ignore
-        }
-      }
-      onLoginSuccess({ username: "test", name: "Caregiver Demo" });
-      setLoading(false);
+    if (!cleanUser) {
+      setError("Please enter your username or email address.");
       return;
     }
+
+    if (!cleanPass) {
+      setError("Please enter your password.");
+      return;
+    }
+
+    setLoading(true);
 
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: cleanUser, password: cleanPass }),
+        body: JSON.stringify({
+          username: cleanUser,
+          password: cleanPass,
+          role: selectedRole,
+        }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
+      if (!res.ok || !data.ok) {
+        setError(data.message || "Invalid credentials. Use test / test");
+        setLoading(false);
+        return;
+      }
+
+      onLoginSuccess({
+        username: data.user?.username || cleanUser,
+        name: data.user?.name || (selectedRole === "patient" ? "Patient" : "Caregiver"),
+        role: (data.user?.role as "caregiver" | "patient") || selectedRole,
+      });
+    } catch {
+      setError("Network error while connecting to auth server. Please try again.");
+      setLoading(false);
+    }
+  };
+
+  const handleQuickPatientEnter = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: "patient",
+          password: "test",
+          role: "patient",
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
       if (res.ok && data.ok) {
-        if (rememberMe && typeof window !== "undefined") {
-          try {
-            localStorage.setItem("quietcare_auth", "true");
-          } catch {
-            // Ignore
-          }
-        }
-        onLoginSuccess(data.user || { username: cleanUser, name: "Caregiver" });
+        onLoginSuccess({
+          username: data.user?.username || "patient",
+          name: data.user?.name || "Parent",
+          role: "patient",
+        });
       } else {
-        // Lenient fallback: log in as demo caregiver
-        handleDirectDemoLogin();
+        onLoginSuccess({
+          username: "patient",
+          name: "Parent",
+          role: "patient",
+        });
       }
     } catch {
-      // Offline fallback: log in immediately
-      handleDirectDemoLogin();
+      onLoginSuccess({
+        username: "patient",
+        name: "Parent",
+        role: "patient",
+      });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="login-screen-wrap">
-      <div className="login-status-bar" aria-hidden>
-        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          9:41
-          {serverLive && (
-            <span
-              title="Backend operational"
-              style={{
-                display: "inline-block",
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                backgroundColor: "#10b981",
-                boxShadow: "0 0 4px #10b981",
-              }}
-            />
-          )}
-        </span>
-        <span className="status-icons">
-          <i />
-          <i />
-          <b />
+    <div className="login-screen-wrapper" id="quietcare-login-screen">
+      <div className="login-status-pill">
+        <span
+          className={`login-status-indicator ${
+            serverLive ? "indicator-live" : "indicator-syncing"
+          }`}
+        />
+        <span>
+          {serverLive ? "Quietcare System Online" : "Connecting to Quietcare..."}
         </span>
       </div>
 
@@ -133,65 +132,84 @@ export function LoginScreen({ onLoginSuccess, serverLive = true }: LoginScreenPr
           </div>
           <h1 className="login-title">Quietcare Portal</h1>
           <p className="login-subtitle">
-            Sign in to manage your parent&apos;s daily medicine routine and Telegram alerts.
+            {selectedRole === "patient"
+              ? "Simple, large, and accessible view for today's medicine routine."
+              : "Sign in to manage your parent's daily medicine routine and alerts."}
           </p>
         </div>
 
-        {/* Demo Credentials Helper Card with 1-Click Action */}
-        <div className="demo-credentials-banner" id="demo-credentials-card">
-          <div className="demo-credentials-header">
-            <div className="demo-badge">DEMO ACCESS</div>
-            <button
-              type="button"
-              id="instant-demo-login-btn"
-              className="demo-autofill-btn"
-              onClick={handleDirectDemoLogin}
-              style={{ backgroundColor: "#10b981", fontWeight: 800 }}
-            >
-              ⚡ Instant 1-Click Sign In
-            </button>
-          </div>
-          <div className="demo-credentials-body">
-            <div className="demo-cred-row">
-              <span className="demo-label">Username:</span>
-              <code className="demo-val">test</code>
-            </div>
-            <div className="demo-cred-row">
-              <span className="demo-label">Password:</span>
-              <code className="demo-val">test</code>
-            </div>
-          </div>
-          <p style={{ margin: "8px 0 0", fontSize: 11, color: "#1e40af", textAlign: "center" }}>
-            Pre-filled below. Just click <strong>Sign In</strong> to enter.
-          </p>
+        {/* Role Selection Tabs */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 8,
+            marginBottom: 16,
+            background: "#f1f5f9",
+            padding: 4,
+            borderRadius: 12,
+          }}
+          id="portal-role-selector"
+        >
+          <button
+            type="button"
+            onClick={() => setSelectedRole("patient")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              padding: "10px 8px",
+              borderRadius: 8,
+              border: "none",
+              background: selectedRole === "patient" ? "#ffffff" : "transparent",
+              color: selectedRole === "patient" ? "#0f172a" : "#64748b",
+              fontWeight: 700,
+              fontSize: 13,
+              boxShadow: selectedRole === "patient" ? "0 2px 6px rgba(0,0,0,0.08)" : "none",
+              cursor: "pointer",
+            }}
+            id="role-tab-patient"
+          >
+            <User size={16} />
+            <span>Patient View</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedRole("caregiver")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              padding: "10px 8px",
+              borderRadius: 8,
+              border: "none",
+              background: selectedRole === "caregiver" ? "#ffffff" : "transparent",
+              color: selectedRole === "caregiver" ? "#0f172a" : "#64748b",
+              fontWeight: 700,
+              fontSize: 13,
+              boxShadow: selectedRole === "caregiver" ? "0 2px 6px rgba(0,0,0,0.08)" : "none",
+              cursor: "pointer",
+            }}
+            id="role-tab-caregiver"
+          >
+            <Activity size={16} />
+            <span>Caregiver</span>
+          </button>
         </div>
 
         {error && (
-          <div className="login-error-box" role="alert">
+          <div className="login-error-box" role="alert" id="login-error-banner">
             <span>!</span>
             <p>{error}</p>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="login-form-fields">
+        <form onSubmit={handleSubmit} className="login-form-fields" id="caregiver-login-form">
           <div className="login-field-group">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <label htmlFor="login-username-input">Username / Email</label>
-              <button
-                type="button"
-                onClick={handleAutofill}
-                style={{
-                  background: "transparent",
-                  border: 0,
-                  color: "#2563eb",
-                  fontSize: 10,
-                  cursor: "pointer",
-                  fontWeight: 600,
-                }}
-              >
-                Reset to &apos;test&apos;
-              </button>
-            </div>
+            <label htmlFor="login-username-input">Username</label>
             <input
               id="login-username-input"
               type="text"
@@ -199,10 +217,11 @@ export function LoginScreen({ onLoginSuccess, serverLive = true }: LoginScreenPr
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              placeholder="e.g. test"
+              placeholder="test"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="login-text-input"
+              required
             />
           </div>
 
@@ -225,11 +244,49 @@ export function LoginScreen({ onLoginSuccess, serverLive = true }: LoginScreenPr
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              placeholder="e.g. test"
+              placeholder="test"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="login-text-input"
+              required
             />
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "8px 12px",
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              borderRadius: 8,
+              fontSize: 12,
+              color: "#475569",
+            }}
+          >
+            <span>
+              Test login: <strong>test</strong> / <strong>test</strong>
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setUsername("test");
+                setPassword("test");
+              }}
+              style={{
+                border: "1px solid #cbd5e1",
+                background: "#ffffff",
+                padding: "3px 8px",
+                borderRadius: 4,
+                fontSize: 11,
+                cursor: "pointer",
+                fontWeight: 600,
+                color: "#0f172a",
+              }}
+            >
+              Fill test login
+            </button>
           </div>
 
           <div className="login-checkbox-row">
@@ -250,31 +307,44 @@ export function LoginScreen({ onLoginSuccess, serverLive = true }: LoginScreenPr
             disabled={loading}
             className="login-submit-button"
           >
-            {loading ? "Signing in..." : "Sign In with Demo Credentials"}
-          </button>
-
-          <button
-            type="button"
-            id="login-direct-button"
-            onClick={handleDirectDemoLogin}
-            style={{
-              background: "#f8fafc",
-              border: "1px solid #cbd5e1",
-              borderRadius: 999,
-              height: 42,
-              fontSize: 12,
-              fontWeight: 700,
-              color: "#334155",
-              cursor: "pointer",
-              transition: "all 0.15s",
-            }}
-          >
-            ⚡ Enter Dashboard Directly (No Password Needed)
+            {loading
+              ? "Signing in..."
+              : selectedRole === "patient"
+              ? "Sign In to Patient View"
+              : "Sign In as Caregiver"}
           </button>
         </form>
 
+        {/* Quick One-Click Direct Entry for Patient View */}
+        <div style={{ marginTop: 12 }}>
+          <button
+            type="button"
+            onClick={handleQuickPatientEnter}
+            disabled={loading}
+            style={{
+              width: "100%",
+              height: 46,
+              background: "#f0fdf4",
+              border: "1.5px solid #86efac",
+              color: "#166534",
+              borderRadius: 12,
+              fontSize: 13,
+              fontWeight: 700,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              cursor: "pointer",
+            }}
+            id="quick-patient-view-btn"
+          >
+            <span>Enter Patient View Directly</span>
+            <ArrowRight size={16} />
+          </button>
+        </div>
+
         <div className="login-footer-note">
-          <span>Quietcare Medication Assistant • Secured Caregiver Session</span>
+          <span>Quietcare Medication Assistant • Secured Session</span>
         </div>
       </div>
     </div>

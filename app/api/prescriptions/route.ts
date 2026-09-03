@@ -28,7 +28,6 @@ export async function POST(req: Request) {
     let base64Data: string | undefined;
     let mimeType = "image/jpeg";
     let fileSizeBytes = 0;
-    let isDemo = false;
 
     const contentType = req.headers.get("content-type") || "";
 
@@ -42,31 +41,31 @@ export async function POST(req: Request) {
         const buffer = await file.arrayBuffer();
         base64Data = Buffer.from(buffer).toString("base64");
       }
-      if (formData.get("isDemo") === "true") {
-        isDemo = true;
-      }
     } else {
       const json = await req.json().catch(() => ({}));
       if (json.fileName) fileName = json.fileName;
       if (json.base64Data) base64Data = json.base64Data;
       if (json.mimeType) mimeType = json.mimeType;
       if (json.fileSizeBytes) fileSizeBytes = Number(json.fileSizeBytes) || 0;
-      if (json.isDemo) isDemo = Boolean(json.isDemo);
+    }
+
+    if (!base64Data) {
+      return NextResponse.json(
+        { success: false, error: "Please upload or capture a photo of the prescription." },
+        { status: 400 }
+      );
     }
 
     const ocrResult = await analyzePrescriptionWithGemini(
       base64Data,
       mimeType,
-      fileSizeBytes,
-      isDemo
+      fileSizeBytes
     );
 
     const hasUncertain = ocrResult.medicines.some((m) => m.uncertain);
 
-    // If actual base64 data was supplied, use it for preview; otherwise use default asset
-    const imageUrl = base64Data
-      ? `data:${mimeType};base64,${base64Data}`
-      : "/assets/images/prescription.png";
+    // Use base64 data for image preview
+    const imageUrl = `data:${mimeType};base64,${base64Data}`;
 
     const newPrescription: PrescriptionRecord = {
       id: `rx_${Date.now()}`,
@@ -84,11 +83,6 @@ export async function POST(req: Request) {
     };
 
     const updatedState = await QuietcareRepository.updateState((prev) => {
-      const logSourceNotice =
-        ocrResult.source === "gemini-3.8-flash"
-          ? "via Gemini 3.8 Flash multimodal AI"
-          : "using clinical demo mode";
-
       const coverage = calculateCoverage(ocrResult.medicines);
       const dosePacks = generateDosePacks(
         ocrResult.medicines,
@@ -117,7 +111,7 @@ export async function POST(req: Request) {
             timestamp: new Date().toISOString(),
             type: "prescription_analyzed",
             title: `Prescription processed (${fileName})`,
-            description: `Identified ${ocrResult.medicines.length} medicines ${logSourceNotice}`,
+            description: `Identified ${ocrResult.medicines.length} medicines via Gemini 3.8 Flash multimodal AI`,
           },
           ...prev.activityLogs,
         ],

@@ -1,16 +1,16 @@
 import { promises as fs } from "fs";
 import path from "path";
 import crypto from "crypto";
-import { createISTIsoString, getISTDateParts, getISTNowIso } from "@/lib/timezone";
+import { getISTNowIso } from "@/lib/timezone";
 import type {
   ActivityLog,
   ConnectionToken,
   Dose,
   DoseLog,
   DoseStatus,
-  Medicine,
+  HelpRequest,
+  HelpRequestStatus,
   PatientProfile,
-  PrescriptionRecord,
   QuietcareAppState,
   RoutineSchedule,
   TelegramConnection,
@@ -19,208 +19,32 @@ import type {
 const DATA_FILE_PATH = path.join(process.cwd(), "data", "quietcare-store.json");
 
 const defaultPatient: PatientProfile = {
-  id: "patient_meena",
-  name: "Meena",
-  prescriptionName: "Shobha Patil",
-  courseDays: 10,
-  availableDays: 7,
-  preparedThrough: "10 sep",
-  daysLeft: 5,
+  id: "patient_primary",
+  name: "",
+  prescriptionName: "",
+  courseDays: 0,
+  availableDays: 0,
+  preparedThrough: "",
+  daysLeft: 0,
 };
-
-const defaultMedicines: Medicine[] = [
-  {
-    id: "vertin",
-    name: "Vertin 2mg",
-    strength: "2mg",
-    schedule: "1-0-1",
-    timing: "After food",
-    days: 3,
-    quantity: 20,
-    instructions: "Do not crush",
-    uncertain: true,
-  },
-  {
-    id: "metformin",
-    name: "Metformin 500mg",
-    strength: "500mg",
-    schedule: "1-0-1",
-    timing: "After food",
-    days: 10,
-    quantity: 20,
-    instructions: "Take after meal",
-  },
-  {
-    id: "telma",
-    name: "Telma 40mg",
-    strength: "40mg",
-    schedule: "1-0-1",
-    timing: "Before Dinner",
-    days: 10,
-    quantity: 20,
-    instructions: "Blood pressure support",
-  },
-  {
-    id: "pantop",
-    name: "Pantop 40mg",
-    strength: "40mg",
-    schedule: "1-0-0",
-    timing: "Before breakfast",
-    days: 10,
-    quantity: 20,
-    instructions: "Take with water 30 mins before breakfast",
-  },
-];
-
-const defaultPrescriptions: PrescriptionRecord[] = [
-  {
-    id: "rx_demo_01",
-    fileName: "Dr_Kulkarni_Cardio_Prescription.png",
-    doctorName: "Dr. S. Kulkarni",
-    clinic: "Cardiology & Geriatric Care Clinic",
-    uploadedAt: new Date(Date.now() - 3600000 * 48).toISOString(),
-    courseDays: 10,
-    medicinesFound: 4,
-    status: "review-needed",
-    imageUrl: "/assets/images/prescription.png",
-    ocrConfidence: 0.94,
-    ocrSource: "demo_fallback",
-    uncertainNotice: "Vertin 2mg timing requires caregiver confirmation",
-  },
-];
 
 const defaultRoutine: RoutineSchedule = {
   language: "Marathi",
   breakfastTime: "8:00 am",
   dinnerTime: "7:30 pm",
-  coverageDays: 7,
-  preparedThrough: "10 sep",
-  dosePacks: [
-    {
-      packetNumber: 1,
-      timingLabel: "Before Breakfast",
-      mealRelation: "30 mins before food",
-      medicines: [
-        { name: "Pantop 40mg", dose: "1 tablet", instruction: "Take with water" },
-      ],
-    },
-    {
-      packetNumber: 2,
-      timingLabel: "After Breakfast",
-      mealRelation: "Within 15 mins after breakfast",
-      medicines: [
-        { name: "Vertin 2mg", dose: "1 tablet", instruction: "Do not crush" },
-        { name: "Metformin 500mg", dose: "1 tablet", instruction: "Take after meal" },
-      ],
-    },
-    {
-      packetNumber: 3,
-      timingLabel: "Before Dinner",
-      mealRelation: "15 mins before dinner",
-      medicines: [
-        { name: "Telma 40mg", dose: "1 tablet", instruction: "Blood pressure support" },
-      ],
-    },
-    {
-      packetNumber: 4,
-      timingLabel: "After Dinner",
-      mealRelation: "After dinner before bed",
-      medicines: [
-        { name: "Vertin 2mg", dose: "1 tablet", instruction: "Night dose" },
-      ],
-    },
-  ],
+  coverageDays: 0,
+  preparedThrough: "",
+  dosePacks: [],
 };
-
-function generateInitialTodayDoses(): Dose[] {
-  const { datePrefix } = getISTDateParts();
-
-  return [
-    {
-      id: "dose_1_bb",
-      medicineId: "pantop",
-      medicineName: "Pantop 40mg",
-      doseAmount: "1 tablet",
-      patientId: "patient_meena",
-      scheduledAt: createISTIsoString(datePrefix, 8, 0),
-      scheduledTimeLabel: "8:00 AM",
-      timing: "Before Breakfast",
-      status: "taken",
-      takenAt: createISTIsoString(datePrefix, 8, 5),
-      notes: "Taken 30 mins before meal",
-    },
-    {
-      id: "dose_2_ab",
-      medicineId: "metformin",
-      medicineName: "Metformin 500mg",
-      doseAmount: "1 tablet",
-      patientId: "patient_meena",
-      scheduledAt: createISTIsoString(datePrefix, 8, 30),
-      scheduledTimeLabel: "8:30 AM",
-      timing: "After Breakfast",
-      status: "taken",
-      takenAt: createISTIsoString(datePrefix, 8, 35),
-      notes: "Taken with breakfast",
-    },
-    {
-      id: "dose_3_bd",
-      medicineId: "telma",
-      medicineName: "Telma 40mg",
-      doseAmount: "1 tablet",
-      patientId: "patient_meena",
-      scheduledAt: createISTIsoString(datePrefix, 19, 30),
-      scheduledTimeLabel: "7:30 PM",
-      timing: "Before Dinner",
-      status: "pending",
-      notes: "Blood pressure support dose",
-    },
-    {
-      id: "dose_4_ad",
-      medicineId: "vertin",
-      medicineName: "Vertin 2mg",
-      doseAmount: "1 tablet",
-      patientId: "patient_meena",
-      scheduledAt: createISTIsoString(datePrefix, 21, 0),
-      scheduledTimeLabel: "9:00 PM",
-      timing: "After Dinner",
-      status: "pending",
-      notes: "Night dose before sleep",
-    },
-  ];
-}
 
 const defaultTelegram: TelegramConnection = {
   connected: false,
   botHandle: "@QuietcareReminderBot",
   botUsername: "QuietcareReminderBot",
-  deepLink: "https://t.me/QuietcareReminderBot?start=qc_meena_demo",
-  parentName: "Meena",
+  deepLink: "",
+  parentName: "",
   isConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN),
 };
-
-const defaultLogs: ActivityLog[] = [
-  {
-    id: "log_init_1",
-    timestamp: new Date(Date.now() - 3600000 * 4).toISOString(),
-    type: "dose_taken",
-    title: "Morning dose confirmed",
-    description: "Pantop 40mg & Metformin 500mg marked taken for Meena",
-  },
-  {
-    id: "log_init_2",
-    timestamp: new Date(Date.now() - 3600000 * 8).toISOString(),
-    type: "stock_alert",
-    title: "Medicine stock initialized",
-    description: "4 medicines in routine with 7 days coverage prepared",
-  },
-  {
-    id: "log_init_3",
-    timestamp: new Date(Date.now() - 3600000 * 24).toISOString(),
-    type: "prescription_uploaded",
-    title: "Prescription analyzed",
-    description: "Found 4 medicines from Dr. S. Kulkarni prescription slip",
-  },
-];
 
 let memoryStore: QuietcareAppState | null = null;
 
@@ -231,30 +55,32 @@ async function loadFromDisk(): Promise<QuietcareAppState> {
 
     return {
       patient: parsed.patient || defaultPatient,
-      medicines: parsed.medicines && parsed.medicines.length > 0 ? parsed.medicines : defaultMedicines,
-      prescriptions: parsed.prescriptions || defaultPrescriptions,
+      medicines: parsed.medicines || [],
+      prescriptions: parsed.prescriptions || [],
       routine: parsed.routine || defaultRoutine,
-      doses: parsed.doses && parsed.doses.length > 0 ? parsed.doses : generateInitialTodayDoses(),
+      doses: parsed.doses || [],
       doseLogs: parsed.doseLogs || [],
       telegram: {
         ...defaultTelegram,
         ...(parsed.telegram || {}),
         isConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN),
       },
-      activityLogs: parsed.activityLogs || defaultLogs,
+      activityLogs: parsed.activityLogs || [],
       pendingTokens: parsed.pendingTokens || [],
+      helpRequests: parsed.helpRequests || [],
     };
   } catch {
     const fresh: QuietcareAppState = {
       patient: defaultPatient,
-      medicines: defaultMedicines,
-      prescriptions: defaultPrescriptions,
+      medicines: [],
+      prescriptions: [],
       routine: defaultRoutine,
-      doses: generateInitialTodayDoses(),
+      doses: [],
       doseLogs: [],
       telegram: defaultTelegram,
-      activityLogs: defaultLogs,
+      activityLogs: [],
       pendingTokens: [],
+      helpRequests: [],
     };
     await saveToDisk(fresh);
     return fresh;
@@ -293,17 +119,18 @@ export class QuietcareRepository {
   static async resetState(): Promise<QuietcareAppState> {
     const reset: QuietcareAppState = {
       patient: defaultPatient,
-      medicines: defaultMedicines,
-      prescriptions: defaultPrescriptions,
+      medicines: [],
+      prescriptions: [],
       routine: defaultRoutine,
-      doses: generateInitialTodayDoses(),
+      doses: [],
       doseLogs: [],
       telegram: {
         ...defaultTelegram,
         isConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN),
       },
-      activityLogs: defaultLogs,
+      activityLogs: [],
       pendingTokens: [],
+      helpRequests: [],
     };
     memoryStore = reset;
     await saveToDisk(reset);
@@ -324,13 +151,13 @@ export class QuietcareRepository {
   static async updateDoseStatus(
     doseId: string,
     status: DoseStatus,
-    source: "telegram" | "caregiver_ui" | "system",
+    source: "telegram" | "caregiver_ui" | "patient_ui" | "system",
     telegramChatId?: number | string
   ): Promise<{ success: boolean; dose?: Dose }> {
     let updatedDose: Dose | undefined;
 
     await this.updateState((prev) => {
-      const nowIso = new Date().toISOString();
+      const nowIso = getISTNowIso();
       const updatedDoses = prev.doses.map((d) => {
         if (d.id === doseId) {
           updatedDose = {
@@ -368,6 +195,8 @@ export class QuietcareRepository {
       const sourceLabel =
         source === "telegram"
           ? "via Parent's Telegram"
+          : source === "patient_ui"
+          ? "via Patient View"
           : source === "caregiver_ui"
           ? "via Caregiver Dashboard"
           : "via System Scheduler";
@@ -399,7 +228,7 @@ export class QuietcareRepository {
   }
 
   // Telegram Connection Token Management
-  static async createPendingToken(patientId: string = "patient_meena"): Promise<ConnectionToken> {
+  static async createPendingToken(patientId: string = "patient_primary"): Promise<ConnectionToken> {
     const rawToken = crypto.randomBytes(12).toString("hex");
     const token = `qc_${rawToken}`;
     const now = new Date();
@@ -430,16 +259,6 @@ export class QuietcareRepository {
     );
 
     if (!target) {
-      // Also allow default demo token if in development
-      if (token === "qc_meena_demo" || token === "qc_meena_7829") {
-        return {
-          token,
-          patientId: state.patient.id,
-          createdAt: new Date().toISOString(),
-          expiry: new Date(Date.now() + 86400000).toISOString(),
-          used: false,
-        };
-      }
       return null;
     }
 
@@ -462,7 +281,7 @@ export class QuietcareRepository {
     let updatedConnection: TelegramConnection = defaultTelegram;
 
     await this.updateState((prev) => {
-      const nowIso = new Date().toISOString();
+      const nowIso = getISTNowIso();
       updatedConnection = {
         ...prev.telegram,
         connected: true,
@@ -494,6 +313,7 @@ export class QuietcareRepository {
     let updatedConnection: TelegramConnection = defaultTelegram;
 
     await this.updateState((prev) => {
+      const nowIso = getISTNowIso();
       updatedConnection = {
         ...prev.telegram,
         connected: false,
@@ -503,7 +323,7 @@ export class QuietcareRepository {
 
       const newLog: ActivityLog = {
         id: `act_${Date.now()}`,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso,
         type: "telegram_connected",
         title: `Telegram Disconnected`,
         description: `Alert connection unlinked by caregiver`,
@@ -524,7 +344,7 @@ export class QuietcareRepository {
   ): Promise<ActivityLog> {
     const newLog: ActivityLog = {
       id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      timestamp: new Date().toISOString(),
+      timestamp: getISTNowIso(),
       ...log,
     };
 
@@ -534,5 +354,87 @@ export class QuietcareRepository {
     }));
 
     return newLog;
+  }
+
+  // Help Request Operations
+  static async getHelpRequests(): Promise<HelpRequest[]> {
+    const state = await this.getState();
+    return state.helpRequests || [];
+  }
+
+  static async createHelpRequest(
+    patientId: string = "patient_primary",
+    message?: string
+  ): Promise<HelpRequest> {
+    const nowIso = getISTNowIso();
+    let newRequest: HelpRequest | undefined;
+
+    await this.updateState((prev) => {
+      newRequest = {
+        id: `help_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        patientId,
+        patientName: prev.patient?.name || "Patient",
+        createdAt: nowIso,
+        status: "active",
+        message: message || "Patient requested assistance via Patient View",
+      };
+
+      const newActivity: ActivityLog = {
+        id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        timestamp: nowIso,
+        type: "help_requested",
+        title: `🆘 Help Requested by ${prev.patient?.name || "Patient"}`,
+        description: message || "Immediate assistance requested via Patient View",
+      };
+
+      return {
+        ...prev,
+        helpRequests: [newRequest!, ...(prev.helpRequests || [])],
+        activityLogs: [newActivity, ...prev.activityLogs],
+      };
+    });
+
+    return newRequest!;
+  }
+
+  static async updateHelpRequestStatus(
+    requestId: string,
+    status: HelpRequestStatus
+  ): Promise<HelpRequest | null> {
+    let updated: HelpRequest | null = null;
+    const nowIso = getISTNowIso();
+
+    await this.updateState((prev) => {
+      const requests = (prev.helpRequests || []).map((req) => {
+        if (req.id === requestId) {
+          updated = {
+            ...req,
+            status,
+            resolvedAt: status === "resolved" ? nowIso : req.resolvedAt,
+          };
+          return updated;
+        }
+        return req;
+      });
+
+      const activities = [...prev.activityLogs];
+      if (status === "resolved") {
+        activities.unshift({
+          id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          timestamp: nowIso,
+          type: "help_resolved",
+          title: `Help Request Resolved`,
+          description: `Caregiver marked help request as resolved`,
+        });
+      }
+
+      return {
+        ...prev,
+        helpRequests: requests,
+        activityLogs: activities,
+      };
+    });
+
+    return updated;
   }
 }
