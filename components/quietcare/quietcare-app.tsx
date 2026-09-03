@@ -22,6 +22,7 @@ import {
 } from "@/lib/client/api";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Camera, Check, Download, Edit, Expand, Folder, Moon, Plus, Share, Sun, UserCircle } from "./icons";
+import { LoginScreen } from "./login-screen";
 
 const initialProgress: QuietcareProgress = { screen: "home", timingConfirmed: false, language: "Marathi", breakfast: "8:00 am", dinner: "7:30 pm" };
 const backMap: Partial<Record<FlowScreen, FlowScreen>> = { "prescription-upload": "welcome", "prescription-review": "prescription-upload", "medicine-upload": "prescription-review", "medicine-review": "medicine-upload", personalise: "medicine-review", "routine-ready": "personalise", "labels-choice": "routine-ready", labels: "labels-choice", pack: "labels", connect: "pack", waiting: "connect", connected: "waiting" };
@@ -394,6 +395,7 @@ function HomeScreen({
   onOpenPrepare,
   onOpenRecords,
   onOpenProfile,
+  onLogout,
 }: {
   patientData: PatientProfile;
   medicinesList: Medicine[];
@@ -406,14 +408,30 @@ function HomeScreen({
   onOpenPrepare: () => void;
   onOpenRecords: (type: "prescriptions" | "stock") => void;
   onOpenProfile: () => void;
+  onLogout: () => void;
 }) {
   return (
     <main className="home-screen">
       <header className="home-header">
         <strong>quietcare</strong>
-        <button type="button" aria-label="Profile" onClick={onOpenProfile}>
-          <UserCircle size={24} />
-        </button>
+        <div style={{ position: "absolute", right: 16, top: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          <button
+            type="button"
+            className="header-logout-btn"
+            onClick={onLogout}
+            title="Sign out of demo session"
+          >
+            Sign Out
+          </button>
+          <button
+            type="button"
+            aria-label="Profile"
+            onClick={onOpenProfile}
+            style={{ border: 0, background: "transparent", cursor: "pointer", display: "grid", placeItems: "center" }}
+          >
+            <UserCircle size={24} />
+          </button>
+        </div>
         <span onClick={onOpenProfile} style={{ cursor: "pointer" }}>
           {patientData.name}
           <Image src="/assets/icons/chevron-down.svg" alt="" width={14} height={14} />
@@ -425,6 +443,9 @@ function HomeScreen({
         </button>
         <button type="button" className="nav-pill" onClick={onOpenSetup}>
           Setup Walkthrough
+        </button>
+        <button type="button" className="nav-pill" onClick={onLogout} title="Open Demo Login Page">
+          Demo Login
         </button>
       </div>
       <div className="home-body">
@@ -537,6 +558,7 @@ export function QuietcareApp() {
   });
   const [serverLive, setServerLive] = useState(true);
   const [doseTaken, setDoseTaken] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
 
   const [prescriptionModal, setPrescriptionModal] = useState(false);
   const [medicineModal, setMedicineModal] = useState(false);
@@ -578,6 +600,16 @@ export function QuietcareApp() {
       active = false;
     };
   }, []);
+
+  const handleLogout = () => {
+    try {
+      localStorage.removeItem("quietcare_auth");
+    } catch {
+      // Ignore
+    }
+    setIsAuthenticated(false);
+    showToast("Signed out of demo session");
+  };
 
   useEffect(() => {
     const transitions: Partial<Record<FlowScreen, FlowScreen>> = {
@@ -727,6 +759,43 @@ export function QuietcareApp() {
     }
   };
 
+  if (!isAuthenticated) {
+    return (
+      <div className="app-shell">
+        <LoginScreen
+          serverLive={serverLive}
+          onLoginSuccess={() => {
+            setIsAuthenticated(true);
+            setProgress((prev) => ({ ...prev, screen: "home" }));
+            showToast("✓ Signed in successfully. Welcome to Quietcare!");
+          }}
+        />
+        {toastMessage && (
+          <div
+            role="status"
+            style={{
+              position: "absolute",
+              top: 50,
+              left: 16,
+              right: 16,
+              background: "rgba(15, 23, 42, 0.95)",
+              color: "white",
+              padding: "10px 14px",
+              borderRadius: 12,
+              fontSize: 12,
+              fontWeight: 600,
+              textAlign: "center",
+              zIndex: 40,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+            }}
+          >
+            {toastMessage}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (progress.screen === "home") {
     return (
       <div className="app-shell app-shell--home">
@@ -743,6 +812,7 @@ export function QuietcareApp() {
           onOpenPrepare={() => setActiveDialog("prepare")}
           onOpenRecords={(type) => setActiveDialog(type)}
           onOpenProfile={() => setActiveDialog("profile")}
+          onLogout={handleLogout}
         />
         {activeDialog === "refill" && (
           <DetailModal title="Refill Alert" onClose={() => setActiveDialog(null)}>
@@ -906,6 +976,16 @@ export function QuietcareApp() {
                 <Button variant="danger" onClick={handleResetDatabase}>
                   Reset Backend State to Default
                 </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setActiveDialog(null);
+                    handleLogout();
+                  }}
+                  style={{ borderColor: "#fca5a5", color: "#dc2626" }}
+                >
+                  Sign Out (Demo Session)
+                </Button>
               </div>
             </div>
           </DetailModal>
@@ -925,6 +1005,9 @@ export function QuietcareApp() {
             </button>
             <button type="button" className="nav-pill nav-pill--active">
               Setup Walkthrough
+            </button>
+            <button type="button" className="nav-pill" onClick={handleLogout} title="Open Demo Login Page">
+              Demo Login
             </button>
           </div>
           <div className="welcome-photo">
@@ -949,6 +1032,22 @@ export function QuietcareApp() {
               <Button variant="secondary" onClick={() => go("prescription-upload")}>
                 + Set Up New Prescription
               </Button>
+              <button
+                type="button"
+                onClick={handleLogout}
+                style={{
+                  background: "transparent",
+                  border: 0,
+                  color: "#64748b",
+                  fontSize: 11,
+                  padding: "4px 0",
+                  cursor: "pointer",
+                  textAlign: "center",
+                  textDecoration: "underline",
+                }}
+              >
+                Sign out of demo session
+              </button>
             </div>
           </Bottom>
         </main>
