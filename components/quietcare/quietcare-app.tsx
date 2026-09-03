@@ -23,7 +23,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Camera, Check, Download, Edit, Expand, Folder, Moon, Plus, Share, Sun, UserCircle } from "./icons";
 
-const initialProgress: QuietcareProgress = { screen: "welcome", timingConfirmed: false, language: "Marathi", breakfast: "8:00 am", dinner: "7:30 pm" };
+const initialProgress: QuietcareProgress = { screen: "home", timingConfirmed: false, language: "Marathi", breakfast: "8:00 am", dinner: "7:30 pm" };
 const backMap: Partial<Record<FlowScreen, FlowScreen>> = { "prescription-upload": "welcome", "prescription-review": "prescription-upload", "medicine-upload": "prescription-review", "medicine-review": "medicine-upload", personalise: "medicine-review", "routine-ready": "personalise", "labels-choice": "routine-ready", labels: "labels-choice", pack: "labels", connect: "pack", waiting: "connect", connected: "waiting" };
 
 function StatusBar({ home = false, serverLive = true }: { home?: boolean; serverLive?: boolean }) {
@@ -54,10 +54,26 @@ function StatusBar({ home = false, serverLive = true }: { home?: boolean; server
   );
 }
 
-function FlowHeader({ screen, onBack }: { screen: FlowScreen; onBack: () => void }) {
+function FlowHeader({ screen, onBack, onExit }: { screen: FlowScreen; onBack: () => void; onExit?: () => void }) {
   const values: Partial<Record<FlowScreen, number>> = { "prescription-upload": 12, "prescription-review": 24, "medicine-upload": 34, "medicine-review": 44, personalise: 56, "labels-choice": 68, labels: 78, pack: 86, connect: 92, waiting: 96, connected: 100 };
   if (!(screen in values)) return null;
-  return <div className="flow-header"><button className="icon-button" onClick={onBack} aria-label="Go back"><ArrowLeft /></button><div className="progress-track"><span style={{ width: `${values[screen]}%` }} /></div><span className="flow-spacer" /></div>;
+  return (
+    <div className="flow-header">
+      <button className="icon-button" onClick={onBack} aria-label="Go back">
+        <ArrowLeft />
+      </button>
+      <div className="progress-track">
+        <span style={{ width: `${values[screen]}%` }} />
+      </div>
+      {onExit ? (
+        <button type="button" className="flow-exit-btn" onClick={onExit} title="Return to Dashboard">
+          Exit
+        </button>
+      ) : (
+        <span className="flow-spacer" />
+      )}
+    </div>
+  );
 }
 function Bottom({ children }: { children: React.ReactNode }) { return <div className="bottom-actions">{children}</div>; }
 function CaptureArt({ kind }: { kind: "prescription" | "medicine" }) {
@@ -369,7 +385,10 @@ function LabelsPreview() {
 function HomeScreen({
   patientData,
   medicinesList,
+  doseTaken,
+  onToggleDose,
   onAddPrescription,
+  onOpenSetup,
   onOpenReview,
   onOpenRoutine,
   onOpenPrepare,
@@ -378,7 +397,10 @@ function HomeScreen({
 }: {
   patientData: PatientProfile;
   medicinesList: Medicine[];
+  doseTaken: boolean;
+  onToggleDose: () => void;
   onAddPrescription: () => void;
+  onOpenSetup: () => void;
   onOpenReview: () => void;
   onOpenRoutine: () => void;
   onOpenPrepare: () => void;
@@ -397,30 +419,65 @@ function HomeScreen({
           <Image src="/assets/icons/chevron-down.svg" alt="" width={14} height={14} />
         </span>
       </header>
+      <div className="nav-pill-group">
+        <button type="button" className="nav-pill nav-pill--active">
+          Meena&apos;s Routine
+        </button>
+        <button type="button" className="nav-pill" onClick={onOpenSetup}>
+          Setup Walkthrough
+        </button>
+      </div>
       <div className="home-body">
-        <section className="today-card">
+        <section className="today-card dose-card-interactive">
           <div className="section-title">
             <h2>Today</h2>
-            <span>On track</span>
+            <span style={{ background: doseTaken ? "#15803d" : "#16a34a" }}>
+              {doseTaken ? "All doses completed" : "On track"}
+            </span>
           </div>
           <div className="today-grid">
-            <div className="dose-ring">
-              <span>Last Dose</span>
-              <b>2:30 PM</b>
+            <div
+              className="dose-ring"
+              style={{
+                background: doseTaken
+                  ? "conic-gradient(#22c55e 0 100%, #22c55e 100% 100%)"
+                  : "conic-gradient(#22c55e 0 50%, #cbd5e1 50% 100%)",
+              }}
+            >
+              <span>{doseTaken ? "Today" : "Doses"}</span>
+              <b>{doseTaken ? "2 / 2" : "1 / 2"}</b>
             </div>
             <div className="dose-times">
-              <p>
-                <Sun size={26} />
-                <span>
-                  Last Dose<strong>After Lunch</strong>
+              <div className="dose-item-action">
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Sun size={24} />
+                  <span>
+                    2:30 PM<strong>After Lunch</strong>
+                  </span>
+                </div>
+                <span className="dose-toggle-tag dose-toggle-tag--taken">✓ Taken</span>
+              </div>
+              <div
+                className="dose-item-action"
+                onClick={onToggleDose}
+                title="Click to toggle dose taken"
+                role="button"
+                tabIndex={0}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Moon size={24} />
+                  <span>
+                    7:30 PM<strong>Before Dinner</strong>
+                  </span>
+                </div>
+                <span
+                  className={`dose-toggle-tag ${
+                    doseTaken ? "dose-toggle-tag--taken" : ""
+                  }`}
+                >
+                  {doseTaken ? "✓ Taken" : "Mark Taken"}
                 </span>
-              </p>
-              <p>
-                <Moon size={26} />
-                <span>
-                  Next Dose<strong>Before Dinner</strong>
-                </span>
-              </p>
+              </div>
             </div>
           </div>
         </section>
@@ -479,6 +536,7 @@ export function QuietcareApp() {
     deepLink: "https://t.me/QuietcareReminderBot?start=qc_meena_7829",
   });
   const [serverLive, setServerLive] = useState(true);
+  const [doseTaken, setDoseTaken] = useState(false);
 
   const [prescriptionModal, setPrescriptionModal] = useState(false);
   const [medicineModal, setMedicineModal] = useState(false);
@@ -646,6 +704,29 @@ export function QuietcareApp() {
     }
   };
 
+  const handleToggleDose = async () => {
+    const next = !doseTaken;
+    setDoseTaken(next);
+    if (next) {
+      showToast("✓ Marked Before Dinner dose as taken for Meena");
+      try {
+        await fetch("/api/activity", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "dose_taken",
+            patientId: "meena",
+            details: { dose: "Before Dinner", time: "7:30 PM", recordedAt: new Date().toISOString() },
+          }),
+        });
+      } catch (err) {
+        console.error("Failed to log dose", err);
+      }
+    } else {
+      showToast("Before Dinner dose marked as pending");
+    }
+  };
+
   if (progress.screen === "home") {
     return (
       <div className="app-shell app-shell--home">
@@ -653,7 +734,10 @@ export function QuietcareApp() {
         <HomeScreen
           patientData={patientData}
           medicinesList={medicinesData}
+          doseTaken={doseTaken}
+          onToggleDose={handleToggleDose}
           onAddPrescription={startNewPrescription}
+          onOpenSetup={() => go("welcome")}
           onOpenReview={() => setActiveDialog("refill")}
           onOpenRoutine={() => setActiveDialog("routine")}
           onOpenPrepare={() => setActiveDialog("prepare")}
@@ -744,11 +828,51 @@ export function QuietcareApp() {
         )}
         {activeDialog === "stock" && (
           <DetailModal title="Medicines Inventory" onClose={() => setActiveDialog(null)}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+            <p style={{ fontSize: 11, color: "var(--color-text-3)", margin: "4px 0 12px" }}>
+              Live inventory synced with backend API:
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
               {medicinesData.map((m) => (
-                <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", background: "var(--color-surface)", borderRadius: 8, fontSize: 12 }}>
-                  <span>{m.name}</span>
-                  <strong>{m.quantity} tabs left</strong>
+                <div key={m.id} className="stock-row">
+                  <div>
+                    <strong style={{ display: "block", color: "var(--color-text)" }}>{m.name}</strong>
+                    <span style={{ fontSize: 10, color: "var(--color-text-3)" }}>
+                      {m.schedule} • {m.timing}
+                    </span>
+                  </div>
+                  <div className="stock-counter">
+                    <button
+                      type="button"
+                      className="stock-btn"
+                      onClick={async () => {
+                        const newQty = Math.max(0, m.quantity - 1);
+                        setMedicinesData((prev) =>
+                          prev.map((item) => (item.id === m.id ? { ...item, quantity: newQty } : item))
+                        );
+                        await updateMedicineQuantity(m.id, newQty);
+                      }}
+                      title="Decrease quantity"
+                    >
+                      -
+                    </button>
+                    <strong style={{ minWidth: 46, textAlign: "center" }}>
+                      {m.quantity} tab{m.quantity === 1 ? "" : "s"}
+                    </strong>
+                    <button
+                      type="button"
+                      className="stock-btn"
+                      onClick={async () => {
+                        const newQty = m.quantity + 1;
+                        setMedicinesData((prev) =>
+                          prev.map((item) => (item.id === m.id ? { ...item, quantity: newQty } : item))
+                        );
+                        await updateMedicineQuantity(m.id, newQty);
+                      }}
+                      title="Increase quantity"
+                    >
+                      +
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -795,6 +919,14 @@ export function QuietcareApp() {
     case "welcome":
       content = (
         <main className="welcome-screen">
+          <div className="nav-pill-group" style={{ margin: "0 0 12px" }}>
+            <button type="button" className="nav-pill" onClick={() => go("home")}>
+              Meena&apos;s Routine
+            </button>
+            <button type="button" className="nav-pill nav-pill--active">
+              Setup Walkthrough
+            </button>
+          </div>
           <div className="welcome-photo">
             <Image src="/assets/images/welcome-caregiver.png" alt="A caregiver and her parent reviewing medicine information" fill priority sizes="342px" />
           </div>
@@ -810,7 +942,14 @@ export function QuietcareApp() {
             </p>
           </div>
           <Bottom>
-            <Button onClick={() => go("prescription-upload")}>Add Prescription</Button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%" }}>
+              <Button onClick={() => go("home")}>
+                View Meena&apos;s Routine (Dashboard)
+              </Button>
+              <Button variant="secondary" onClick={() => go("prescription-upload")}>
+                + Set Up New Prescription
+              </Button>
+            </div>
           </Bottom>
         </main>
       );
@@ -1070,7 +1209,7 @@ export function QuietcareApp() {
   return (
     <div className="app-shell">
       <StatusBar />
-      <FlowHeader screen={progress.screen} onBack={back} />
+      <FlowHeader screen={progress.screen} onBack={back} onExit={() => go("home")} />
       {content}
       {toastMessage && (
         <div

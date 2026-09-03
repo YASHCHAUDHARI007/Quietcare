@@ -16,6 +16,10 @@ const manrope = localFont({
 export const metadata: Metadata = {
   title: "Quietcare",
   description: "A clear medicine routine for your parent",
+  openGraph: {
+    title: "Quietcare",
+    description: "A clear medicine routine for your parent",
+  },
 };
 
 export default function RootLayout({
