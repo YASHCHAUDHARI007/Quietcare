@@ -1,0 +1,177 @@
+{
+  "patient": {
+    "name": "Meena",
+    "prescriptionName": "Shobha Patil",
+    "courseDays": 10,
+    "availableDays": 7,
+    "preparedThrough": "10 sep",
+    "daysLeft": 5
+  },
+  "medicines": [
+    {
+      "id": "vertin",
+      "name": "Vertin 2mg",
+      "schedule": "1-0-1",
+      "timing": "After food",
+      "days": 3,
+      "quantity": 20,
+      "uncertain": true
+    },
+    {
+      "id": "metformin",
+      "name": "Metformin 500mg",
+      "schedule": "1-0-1",
+      "timing": "After food",
+      "days": 10,
+      "quantity": 20
+    },
+    {
+      "id": "telma",
+      "name": "Telma 40mg",
+      "schedule": "1-0-1",
+      "timing": "After food",
+      "days": 10,
+      "quantity": 20
+    },
+    {
+      "id": "pantop",
+      "name": "Pantop 40mg",
+      "schedule": "1-0-1",
+      "timing": "Before breakfast",
+      "days": 10,
+      "quantity": 20
+    }
+  ],
+  "prescriptions": [
+    {
+      "id": "rx_1788702826168",
+      "fileName": "test_rx.png",
+      "doctorName": "Dr. S. Kulkarni",
+      "clinic": "Geriatric & Family Health Clinic",
+      "uploadedAt": "2026-09-06T13:53:46.168Z",
+      "courseDays": 10,
+      "medicinesFound": 4,
+      "status": "review-needed",
+      "imageUrl": "/assets/images/prescription.png",
+      "ocrConfidence": 0.92
+    },
+    {
+      "id": "rx_demo_01",
+      "fileName": "Dr_Kulkarni_Cardio_Prescription.png",
+      "doctorName": "Dr. S. Kulkarni",
+      "clinic": "Cardiology & Geriatric Care Clinic",
+      "uploadedAt": "2026-09-04T13:53:41.510Z",
+      "courseDays": 10,
+      "medicinesFound": 4,
+      "status": "review-needed",
+      "imageUrl": "/assets/images/prescription.png",
+      "ocrConfidence": 0.94
+    }
+  ],
+  "routine": {
+    "language": "Marathi",
+    "breakfastTime": "8:00 am",
+    "dinnerTime": "7:30 pm",
+    "coverageDays": 7,
+    "preparedThrough": "10 sep",
+    "dosePacks": [
+      {
+        "packetNumber": 1,
+        "timingLabel": "Before Breakfast",
+        "mealRelation": "30 mins before food",
+        "medicines": [
+          {
+            "name": "Pantop 40mg",
+            "dose": "1 tablet",
+            "instruction": "Take with water"
+          }
+        ]
+      },
+      {
+        "packetNumber": 2,
+        "timingLabel": "After Breakfast",
+        "mealRelation": "Within 15 mins after breakfast",
+        "medicines": [
+          {
+            "name": "Vertin 2mg",
+            "dose": "1 tablet",
+            "instruction": "Do not crush"
+          },
+          {
+            "name": "Metformin 500mg",
+            "dose": "1 tablet",
+            "instruction": "Take after meal"
+          }
+        ]
+      },
+      {
+        "packetNumber": 3,
+        "timingLabel": "Before Dinner",
+        "mealRelation": "15 mins before dinner",
+        "medicines": [
+          {
+            "name": "Telma 40mg",
+            "dose": "1 tablet",
+            "instruction": "Blood pressure support"
+          }
+        ]
+      },
+      {
+        "packetNumber": 4,
+        "timingLabel": "After Dinner",
+        "mealRelation": "After dinner before bed",
+        "medicines": [
+          {
+            "name": "Vertin 2mg",
+            "dose": "1 tablet",
+            "instruction": "Night dose"
+          }
+        ]
+      }
+    ]
+  },
+  "telegram": {
+    "connected": false,
+    "botHandle": "@QuietcareReminderBot",
+    "deepLink": "https://t.me/QuietcareReminderBot?start=qc_a9ipk0",
+    "parentName": "Meena",
+    "lastReminderSent": "2026-09-06T13:53:53.909Z"
+  },
+  "activityLogs": [
+    {
+      "id": "act_1788702833909",
+      "timestamp": "2026-09-06T13:53:53.909Z",
+      "type": "telegram_connected",
+      "title": "Test Telegram Reminder Sent",
+      "description": "Sent dose reminder for Meena via @QuietcareReminderBot"
+    },
+    {
+      "id": "act_1788702826168",
+      "timestamp": "2026-09-06T13:53:46.168Z",
+      "type": "prescription_added",
+      "title": "Prescription uploaded (test_rx.png)",
+      "description": "Identified 4 medicines via rule-based-ocr"
+    },
+    {
+      "id": "log_1",
+      "timestamp": "2026-09-06T10:53:41.511Z",
+      "type": "dose_taken",
+      "title": "After Lunch dose logged",
+      "description": "Marked taken by caregiver at 2:30 PM"
+    },
+    {
+      "id": "log_2",
+      "timestamp": "2026-09-06T05:53:41.511Z",
+      "type": "stock_alert",
+      "title": "Low stock warning",
+      "description": "Telma 40mg has ~4 days remaining"
+    },
+    {
+      "id": "log_3",
+      "timestamp": "2026-09-05T13:53:41.511Z",
+      "type": "prescription_added",
+      "title": "Prescription scanned",
+      "description": "Found 4 medicines from Dr. S. Kulkarni slip"
+    }
+  ]
+}

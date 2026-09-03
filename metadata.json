@@ -1,0 +1,6 @@
+{
+  "name": "Quietcare",
+  "description": "A clear medicine routine for your parent",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
