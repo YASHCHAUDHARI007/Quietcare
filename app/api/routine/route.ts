@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { calculateCoverage } from "@/lib/routine";
-import { getStore, updateStore } from "@/lib/server/store";
+import { QuietcareRepository } from "@/lib/server/repository";
+import { ReminderService } from "@/lib/server/reminders";
 
 export async function GET() {
   try {
-    const store = await getStore();
+    const store = await QuietcareRepository.getState();
     return NextResponse.json({
       success: true,
       routine: store.routine,
@@ -12,7 +13,7 @@ export async function GET() {
       coverageDays: store.routine.coverageDays,
     });
   } catch (error) {
-    console.error("Error fetching routine:", error);
+    console.error("[API routine GET] Error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to fetch routine" },
       { status: 500 }
@@ -25,7 +26,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { language, breakfast, dinner } = body;
 
-    const updatedState = await updateStore((prev) => {
+    const updatedState = await QuietcareRepository.updateState((prev) => {
       const coverage = calculateCoverage(prev.medicines);
       const chosenLang = language || prev.routine.language || "Marathi";
       const bTime = breakfast || prev.routine.breakfastTime || "8:00 am";
@@ -88,23 +89,25 @@ export async function POST(req: Request) {
             timestamp: new Date().toISOString(),
             type: "routine_created",
             title: `Routine personalized (${chosenLang})`,
-            description: `Configured meals (${bTime} / ${dTime}). ${coverage} days coverage ready.`,
+            description: `Configured meal timings (${bTime} / ${dTime}). ${coverage} days coverage ready.`,
           },
           ...prev.activityLogs,
         ],
       };
     });
 
+    // Ensure today's doses are synced with meal times
+    await ReminderService.syncTodayDosesFromRoutine();
+
     return NextResponse.json({
       success: true,
       routine: updatedState.routine,
-      patient: updatedState.patient,
       coverageDays: updatedState.routine.coverageDays,
     });
   } catch (error) {
-    console.error("Error creating routine:", error);
+    console.error("[API routine POST] Error:", error);
     return NextResponse.json(
-      { success: false, error: "Failed to create routine" },
+      { success: false, error: "Failed to update routine" },
       { status: 500 }
     );
   }

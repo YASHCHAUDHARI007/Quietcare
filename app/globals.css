@@ -432,6 +432,140 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   color: #ef4444;
 }
 
+/* Badges & Status Indicators */
+.badge-ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.badge-demo {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #fffbeb;
+  color: #92400e;
+  border: 1px solid #fde68a;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.dose-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+
+.dose-status-tag--taken {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #86efac;
+}
+
+.dose-status-tag--reminder_sent {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #93c5fd;
+}
+
+.dose-status-tag--pending {
+  background: #f8fafc;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+}
+
+.dose-status-tag--not_yet {
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fcd34d;
+}
+
+.dose-status-tag--missed {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+
+.telegram-connect-card {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.telegram-connect-card--pending {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.waiting-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #0284c7;
+  display: inline-block;
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(0.9); opacity: 0.5; }
+  50% { transform: scale(1.3); opacity: 1; }
+}
+
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 380px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.activity-item {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-2);
+}
+
+.activity-item strong {
+  display: block;
+  font-size: 12px;
+  color: var(--color-text);
+}
+
+.activity-item p {
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: var(--color-text-2);
+  line-height: 15px;
+}
+
+.activity-item time {
+  display: block;
+  font-size: 10px;
+  color: var(--color-text-3);
+  margin-top: 4px;
+}
 
 @media (max-height: 720px) { .welcome-photo{height:250px}.brand-mark{width:92px;height:92px}.brand-mark img{width:78px;height:78px}.choice-illustration{height:250px}.choice-illustration img{height:245px}.capture-art{top:43%} }
 @media (prefers-reduced-motion: reduce) { .spinner{animation:none}.button{transition:none} }

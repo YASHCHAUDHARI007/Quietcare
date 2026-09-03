@@ -1,18 +1,18 @@
 import { NextResponse } from "next/server";
-import { getStore, updateStore } from "@/lib/server/store";
+import { QuietcareRepository } from "@/lib/server/repository";
 import type { Medicine } from "@/types/quietcare";
 
 export async function GET() {
   try {
-    const store = await getStore();
+    const state = await QuietcareRepository.getState();
     return NextResponse.json({
       success: true,
-      data: store.medicines,
-      count: store.medicines.length,
-      uncertainCount: store.medicines.filter((m) => m.uncertain).length,
+      data: state.medicines,
+      count: state.medicines.length,
+      uncertainCount: state.medicines.filter((m) => m.uncertain).length,
     });
   } catch (error) {
-    console.error("Error fetching medicines:", error);
+    console.error("[API medicines GET] Error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to fetch medicines" },
       { status: 500 }
@@ -32,7 +32,7 @@ export async function PUT(req: Request) {
       );
     }
 
-    const updatedState = await updateStore((prev) => {
+    const updatedState = await QuietcareRepository.updateState((prev) => {
       const updatedMedicines = prev.medicines.map((med) => {
         if (med.id === id || (name && med.name.toLowerCase() === name.toLowerCase())) {
           return {
@@ -53,7 +53,7 @@ export async function PUT(req: Request) {
           {
             id: `act_${Date.now()}`,
             timestamp: new Date().toISOString(),
-            type: "stock_alert",
+            type: "medicine_edited",
             title: `Updated ${name || id}`,
             description: timingConfirmed
               ? `Timing verified: ${timing || "Confirmed"}`
@@ -69,7 +69,7 @@ export async function PUT(req: Request) {
       medicines: updatedState.medicines,
     });
   } catch (error) {
-    console.error("Error updating medicine:", error);
+    console.error("[API medicines PUT] Error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to update medicine" },
       { status: 500 }
@@ -89,7 +89,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const updatedState = await updateStore((prev) => ({
+    const updatedState = await QuietcareRepository.updateState((prev) => ({
       ...prev,
       medicines: newItems,
     }));
@@ -99,7 +99,7 @@ export async function POST(req: Request) {
       medicines: updatedState.medicines,
     });
   } catch (error) {
-    console.error("Error setting medicines:", error);
+    console.error("[API medicines POST] Error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to set medicines" },
       { status: 500 }

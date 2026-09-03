@@ -1,10 +1,18 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { dinnerTimes, languages, mealTimes, medicines as initialMedicinesList, patient as initialPatient } from "@/data/mock-data";
-import { calculateCoverage } from "@/lib/routine";
+import { useEffect, useRef, useState, useCallback } from "react";
+import {
+  dinnerTimes,
+  languages,
+  mealTimes,
+  medicines as initialMedicinesList,
+  patient as initialPatient,
+} from "@/data/mock-data";
 import type {
+  ActivityLog,
+  Dose,
+  DoseStatus,
   FlowScreen,
   Medicine,
   PatientProfile,
@@ -15,19 +23,65 @@ import type {
 import {
   connectTelegram,
   fetchAppState,
+  fetchTelegramStatus,
+  fetchTodayDoses,
+  resetBackendState,
   saveRoutineSettings,
+  triggerTestDoseReminder,
+  updateDoseStatusApi,
   updateMedicineQuantity,
   updateMedicineTiming,
   uploadPrescriptionFile,
 } from "@/lib/client/api";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Camera, Check, Download, Edit, Expand, Folder, Moon, Plus, Share, Sun, UserCircle } from "./icons";
+import {
+  ActivityIcon,
+  ArrowLeft,
+  Bell,
+  Camera,
+  Check,
+  Download,
+  Edit,
+  Expand,
+  Folder,
+  Moon,
+  Plus,
+  Share,
+  Sun,
+  UserCircle,
+} from "./icons";
 import { LoginScreen } from "./login-screen";
 
-const initialProgress: QuietcareProgress = { screen: "home", timingConfirmed: false, language: "Marathi", breakfast: "8:00 am", dinner: "7:30 pm" };
-const backMap: Partial<Record<FlowScreen, FlowScreen>> = { "prescription-upload": "welcome", "prescription-review": "prescription-upload", "medicine-upload": "prescription-review", "medicine-review": "medicine-upload", personalise: "medicine-review", "routine-ready": "personalise", "labels-choice": "routine-ready", labels: "labels-choice", pack: "labels", connect: "pack", waiting: "connect", connected: "waiting" };
+const initialProgress: QuietcareProgress = {
+  screen: "home",
+  timingConfirmed: false,
+  language: "Marathi",
+  breakfast: "8:00 am",
+  dinner: "7:30 pm",
+};
 
-function StatusBar({ home = false, serverLive = true }: { home?: boolean; serverLive?: boolean }) {
+const backMap: Partial<Record<FlowScreen, FlowScreen>> = {
+  "prescription-upload": "welcome",
+  "prescription-review": "prescription-upload",
+  "medicine-upload": "prescription-review",
+  "medicine-review": "medicine-upload",
+  personalise: "medicine-review",
+  "routine-ready": "personalise",
+  "labels-choice": "routine-ready",
+  labels: "labels-choice",
+  pack: "labels",
+  connect: "pack",
+  waiting: "connect",
+  connected: "waiting",
+};
+
+function StatusBar({
+  home = false,
+  serverLive = true,
+}: {
+  home?: boolean;
+  serverLive?: boolean;
+}) {
   return (
     <div className={`status-bar${home ? " status-bar--home" : ""}`} aria-hidden>
       <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -49,40 +103,78 @@ function StatusBar({ home = false, serverLive = true }: { home?: boolean; server
       <span className="status-icons">
         <i />
         <i />
-        <b />
+        <i />
       </span>
     </div>
   );
 }
 
-function FlowHeader({ screen, onBack, onExit }: { screen: FlowScreen; onBack: () => void; onExit?: () => void }) {
-  const values: Partial<Record<FlowScreen, number>> = { "prescription-upload": 12, "prescription-review": 24, "medicine-upload": 34, "medicine-review": 44, personalise: 56, "labels-choice": 68, labels: 78, pack: 86, connect: 92, waiting: 96, connected: 100 };
-  if (!(screen in values)) return null;
+function FlowHeader({
+  screen,
+  onBack,
+  onExit,
+}: {
+  screen: FlowScreen;
+  onBack: () => void;
+  onExit: () => void;
+}) {
+  if (screen === "welcome" || screen === "home") return null;
+
   return (
-    <div className="flow-header">
-      <button className="icon-button" onClick={onBack} aria-label="Go back">
+    <header className="flow-header">
+      <button onClick={onBack} aria-label="Back">
         <ArrowLeft />
       </button>
-      <div className="progress-track">
-        <span style={{ width: `${values[screen]}%` }} />
+      <span>Quietcare</span>
+      <button onClick={onExit} aria-label="Exit setup">
+        <Image src="/assets/icons/close.svg" alt="" width={24} height={24} />
+      </button>
+    </header>
+  );
+}
+
+function Bottom({ children }: { children: React.ReactNode }) {
+  return <div className="bottom-bar">{children}</div>;
+}
+
+function LoadingScreen({
+  title,
+  detail,
+}: {
+  title: string;
+  detail: string;
+}) {
+  return (
+    <main className="loading-screen" role="status" aria-live="polite">
+      <div className="spinner" />
+      <h2>{title}</h2>
+      <p>{detail}</p>
+    </main>
+  );
+}
+
+function CaptureArt({ kind }: { kind: "prescription" | "medicine" }) {
+  return (
+    <div className="capture-art" aria-hidden="true">
+      <div className="capture-art-pulse" />
+      <div className="capture-art-grid" />
+      <div className="capture-art-card">
+        <Image
+          src={
+            kind === "prescription"
+              ? "/assets/illustrations/prescription-scan.png"
+              : "/assets/illustrations/medicines-scan.png"
+          }
+          alt=""
+          width={kind === "prescription" ? 220 : 250}
+          height={kind === "prescription" ? 250 : 210}
+          priority
+        />
       </div>
-      {onExit ? (
-        <button type="button" className="flow-exit-btn" onClick={onExit} title="Return to Dashboard">
-          Exit
-        </button>
-      ) : (
-        <span className="flow-spacer" />
-      )}
+      <div className="capture-art-reticle" />
     </div>
   );
 }
-function Bottom({ children }: { children: React.ReactNode }) { return <div className="bottom-actions">{children}</div>; }
-function CaptureArt({ kind }: { kind: "prescription" | "medicine" }) {
-  const source = kind === "prescription" ? "/assets/illustrations/upload-prescription.png" : "/assets/illustrations/add-medicines.png";
-  return <div className={`capture-art capture-art--${kind}`}><Image src={source} alt="" fill sizes="190px" priority /></div>;
-}
-function Spinner() { return <span className="spinner" aria-hidden />; }
-function LoadingScreen({ title, detail }: { title: string; detail: string }) { return <main className="center-screen" aria-live="polite"><Spinner /><h1>{title}</h1><p>{detail}</p></main>; }
 
 function MedicineList({
   medicineItems,
@@ -93,41 +185,57 @@ function MedicineList({
   timingConfirmed: boolean;
   onEdit: () => void;
 }) {
-  const uncertainMed = medicineItems.find((m) => m.uncertain);
-  const regularMeds = timingConfirmed
-    ? medicineItems
-    : medicineItems.filter((m) => !m.uncertain);
-
   return (
-    <div className="medicine-list">
-      {!timingConfirmed && uncertainMed && (
-        <article className="medicine-card medicine-card--warning">
-          <div className="warning-label">
-            <span>!</span> Timing unclear
-          </div>
-          <h3>{uncertainMed.name}</h3>
-          <p>
-            {uncertainMed.schedule} <b>•</b> {uncertainMed.timing} <b>•</b> {uncertainMed.days} days
-          </p>
-          <Button onClick={onEdit}>Check timing</Button>
-        </article>
-      )}
-      <div className="medicine-group">
-        {regularMeds.map((medicine) => (
-          <article className="medicine-row" key={medicine.id}>
+    <div className="medicine-list" role="list">
+      {medicineItems.map((med) => {
+        const isUncertain = Boolean(med.uncertain && !timingConfirmed);
+        return (
+          <article
+            className={`medicine-card ${isUncertain ? "medicine-card--warn" : ""}`}
+            key={med.id}
+          >
             <div>
-              <h3>{medicine.name}</h3>
-              <p>
-                {medicine.schedule} <b>•</b> {medicine.timing} <b>•</b> {medicine.days} days
+              <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0, color: "var(--color-text)" }}>
+                {med.name}
+              </h2>
+              <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--color-text-2)" }}>
+                {med.schedule} • {med.timing}
               </p>
-              <small>Special instructions</small>
+              {med.instructions && (
+                <span style={{ display: "block", fontSize: 10, color: "var(--color-text-3)", marginTop: 2 }}>
+                  {med.instructions}
+                </span>
+              )}
             </div>
-            <button className="edit-button" onClick={onEdit} aria-label={`Edit ${medicine.name}`}>
-              <Edit />
-            </button>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+              <span className="medicine-days">{med.days} days</span>
+              {isUncertain ? (
+                <button
+                  type="button"
+                  className="warn-pill"
+                  onClick={onEdit}
+                  title="Timing unclear from prescription. Tap to confirm."
+                >
+                  Confirm timing
+                </button>
+              ) : (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: "#16a34a",
+                    background: "#dcfce7",
+                    padding: "2px 6px",
+                    borderRadius: 999,
+                  }}
+                >
+                  ✓ Verified
+                </span>
+              )}
+            </div>
           </article>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
 }
@@ -139,14 +247,14 @@ function EditPrescription({
   onClose: () => void;
   onSave: (timing: string) => void;
 }) {
-  const timings = ["Before breakfast", "After breakfast", "Before lunch", "After lunch", "Before dinner", "After dinner", "SOS"];
-  const [selectedTiming, setSelectedTiming] = useState("After breakfast");
+  const [selectedTiming, setSelectedTiming] = useState("After food");
+  const timings = ["Before food", "With food", "After food", "At bedtime"];
 
   return (
     <div className="modal-scrim">
-      <section className="sheet" role="dialog" aria-modal="true" aria-labelledby="edit-title">
+      <section className="sheet" role="dialog" aria-modal="true">
         <div className="sheet-header">
-          <h2 id="edit-title">Edit</h2>
+          <h2>Review uncertain timing</h2>
           <button onClick={onClose} aria-label="Close">
             <Image src="/assets/icons/close.svg" alt="" width={24} height={24} />
           </button>
@@ -180,20 +288,77 @@ function EditPrescription({
           <Button variant="danger" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => onSave(selectedTiming)}>Save</Button>
+          <Button onClick={() => onSave(selectedTiming)}>Save & Confirm</Button>
         </div>
       </section>
     </div>
   );
 }
 
-function UploadActions({ onChoose, onTake, selectedName }: { onChoose: () => void; onTake: () => void; selectedName?: string }) {
-  return <Bottom>{selectedName && <div className="file-chip">Selected: {selectedName}</div>}<div className="split-actions"><Button variant="secondary" onClick={onChoose}><Folder /> Choose photo</Button><Button onClick={onTake}><Camera /> Take photo</Button></div></Bottom>;
+function UploadActions({
+  onChoose,
+  onTake,
+  selectedName,
+}: {
+  onChoose: () => void;
+  onTake: () => void;
+  selectedName?: string;
+}) {
+  return (
+    <Bottom>
+      {selectedName && (
+        <div className="file-chip">Selected: {selectedName}</div>
+      )}
+      <div className="split-actions">
+        <Button variant="secondary" onClick={onChoose}>
+          <Folder /> Choose photo
+        </Button>
+        <Button onClick={onTake}>
+          <Camera /> Take photo
+        </Button>
+      </div>
+    </Bottom>
+  );
 }
 
-function UploadModal({ medicine, onClose, onSelect }: { medicine: boolean; onClose: () => void; onSelect: (file?: File) => void }) {
+function UploadModal({
+  medicine,
+  onClose,
+  onSelect,
+}: {
+  medicine: boolean;
+  onClose: () => void;
+  onSelect: (file?: File) => void;
+}) {
   const input = useRef<HTMLInputElement>(null);
-  return <div className="modal-scrim modal-scrim--center"><section className="upload-dialog" role="dialog" aria-modal="true" aria-labelledby="upload-title"><div className="sheet-header"><h2 id="upload-title">Upload {medicine ? "medicine photo" : "prescription"}</h2><button onClick={onClose} aria-label="Close"><Image src="/assets/icons/close.svg" alt="" width={24} height={24} /></button></div><div className="upload-drop"><Folder size={32}/><strong>Choose a file from your device</strong><span>{medicine ? "JPG or PNG" : "JPG, PNG or PDF"}</span><Button onClick={() => input.current?.click()}>Browse files</Button><input ref={input} className="sr-only" type="file" accept={medicine ? "image/*" : "image/*,.pdf,application/pdf"} onChange={(event) => onSelect(event.target.files?.[0])}/></div><Button variant="secondary" onClick={onClose}>Cancel</Button></section></div>;
+  return (
+    <div className="modal-scrim modal-scrim--center">
+      <section className="upload-dialog" role="dialog" aria-modal="true" aria-labelledby="upload-title">
+        <div className="sheet-header">
+          <h2 id="upload-title">Upload {medicine ? "medicine photo" : "prescription"}</h2>
+          <button onClick={onClose} aria-label="Close">
+            <Image src="/assets/icons/close.svg" alt="" width={24} height={24} />
+          </button>
+        </div>
+        <div className="upload-drop">
+          <Folder size={32} />
+          <strong>Choose a file from your device</strong>
+          <span>{medicine ? "JPG or PNG (max 10MB)" : "JPG, PNG or WebP (max 10MB)"}</span>
+          <Button onClick={() => input.current?.click()}>Browse files</Button>
+          <input
+            ref={input}
+            className="sr-only"
+            type="file"
+            accept={medicine ? "image/*" : "image/jpeg,image/png,image/webp"}
+            onChange={(event) => onSelect(event.target.files?.[0])}
+          />
+        </div>
+        <Button variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
+      </section>
+    </div>
+  );
 }
 
 function PrescriptionReview({
@@ -201,6 +366,8 @@ function PrescriptionReview({
   medicinesList,
   patientName,
   courseDays,
+  ocrSource = "demo_fallback",
+  ocrNotice,
   onEdit,
   onContinue,
   onExpand,
@@ -209,17 +376,35 @@ function PrescriptionReview({
   medicinesList: Medicine[];
   patientName: string;
   courseDays: number;
+  ocrSource?: "gemini-3.8-flash" | "demo_fallback";
+  ocrNotice?: string;
   onEdit: () => void;
   onContinue: () => void;
   onExpand: () => void;
 }) {
   const uncertainCount = medicinesList.filter((m) => m.uncertain).length;
+  const isAi = ocrSource === "gemini-3.8-flash";
+
   return (
     <main className="screen-content screen-content--review">
-      <h1>Review prescription</h1>
-      <p>
-        We found {medicinesList.length} medicines. Check {timingConfirmed || uncertainCount === 0 ? "the details" : `${uncertainCount} unclear detail`} before continuing.
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        <h1 style={{ margin: 0 }}>Review prescription</h1>
+        <span className={isAi ? "badge-ai" : "badge-demo"}>
+          {isAi ? "✨ Gemini 3.8 Flash OCR" : "📋 Demo Fallback"}
+        </span>
+      </div>
+      <p style={{ margin: "0 0 12px" }}>
+        We found {medicinesList.length} medicines. Check{" "}
+        {timingConfirmed || uncertainCount === 0 ? "the details" : `${uncertainCount} unclear detail`}{" "}
+        before continuing.
       </p>
+
+      {ocrNotice && (
+        <div style={{ fontSize: 11, color: "var(--color-text-3)", marginBottom: 10, background: "var(--color-surface)", padding: "6px 10px", borderRadius: 8 }}>
+          {ocrNotice}
+        </div>
+      )}
+
       <div className="prescription-preview">
         <Image src="/assets/images/prescription.png" alt="Uploaded prescription" fill sizes="342px" priority />
         <button type="button" aria-label="Expand prescription" onClick={onExpand}>
@@ -247,8 +432,37 @@ function PrescriptionReview({
 }
 
 function MedicineReview({ onEdit, onContinue }: { onEdit: () => void; onContinue: () => void }) {
-  const tags: Array<[number, number, string, string]> = [[2,32,"Glycomet 500mg","20 Tab"],[55,31,"Telma 40mg","20 Tab"],[4,48,"Atorvastatin","20 Tab"],[67,60,"Dolo 500mg","20 Tab"],[2,70,"Glimepride","20 Tab"],[35,64,"Lumia 60k","8 Cap"],[38,77,"Pan 40mg","20 Tab"],[2,91,"Amlodipine","20 Tab"],[37,93,"Pan 40mg","20 Tab"],[69,91,"Ecosprin","20 Tab"]];
-  return <main className="photo-review"><div className="medicine-photo"><Image src="/assets/images/medicines-flatlay.png" alt="Detected medicine packages laid flat" fill sizes="390px" priority /><button onClick={onEdit} aria-label="Edit matches"><Edit /></button>{tags.map(([x,y,name,qty]) => <span className="detection-tag" style={{ left: `${x}%`, top: `${y}%` }} key={`${name}-${x}-${y}`}>{name}<b>{qty}</b></span>)}</div><Bottom><Button onClick={onContinue}>Confirm Prescription</Button></Bottom></main>;
+  const tags: Array<[number, number, string, string]> = [
+    [2, 32, "Glycomet 500mg", "20 Tab"],
+    [55, 31, "Telma 40mg", "20 Tab"],
+    [4, 48, "Atorvastatin", "20 Tab"],
+    [67, 60, "Dolo 500mg", "20 Tab"],
+    [2, 70, "Glimepride", "20 Tab"],
+    [35, 64, "Lumia 60k", "8 Cap"],
+    [38, 77, "Pan 40mg", "20 Tab"],
+    [2, 91, "Amlodipine", "20 Tab"],
+    [37, 93, "Pan 40mg", "20 Tab"],
+    [69, 91, "Ecosprin", "20 Tab"],
+  ];
+  return (
+    <main className="photo-review">
+      <div className="medicine-photo">
+        <Image src="/assets/images/medicines-flatlay.png" alt="Detected medicine packages laid flat" fill sizes="390px" priority />
+        <button onClick={onEdit} aria-label="Edit matches">
+          <Edit />
+        </button>
+        {tags.map(([x, y, name, qty]) => (
+          <span className="detection-tag" style={{ left: `${x}%`, top: `${y}%` }} key={`${name}-${x}-${y}`}>
+            {name}
+            <b>{qty}</b>
+          </span>
+        ))}
+      </div>
+      <Bottom>
+        <Button onClick={onContinue}>Confirm Medicine Match</Button>
+      </Bottom>
+    </main>
+  );
 }
 
 function EditMedicine({
@@ -386,8 +600,13 @@ function LabelsPreview() {
 function HomeScreen({
   patientData,
   medicinesList,
-  doseTaken,
-  onToggleDose,
+  dosesList,
+  dosesStats,
+  lastDose,
+  nextDose,
+  telegramData,
+  onToggleDoseStatus,
+  onSendReminder,
   onAddPrescription,
   onOpenSetup,
   onOpenReview,
@@ -396,20 +615,39 @@ function HomeScreen({
   onOpenRecords,
   onOpenProfile,
   onLogout,
+  onOpenTelegramConnect,
 }: {
   patientData: PatientProfile;
   medicinesList: Medicine[];
-  doseTaken: boolean;
-  onToggleDose: () => void;
+  dosesList: Dose[];
+  dosesStats: {
+    total: number;
+    taken: number;
+    pending: number;
+    reminderSent: number;
+    missed: number;
+    notYet: number;
+  };
+  lastDose: Dose | null;
+  nextDose: Dose | null;
+  telegramData: TelegramConnection;
+  onToggleDoseStatus: (doseId: string, currentStatus: DoseStatus) => void;
+  onSendReminder: (doseId?: string) => void;
   onAddPrescription: () => void;
   onOpenSetup: () => void;
   onOpenReview: () => void;
   onOpenRoutine: () => void;
   onOpenPrepare: () => void;
-  onOpenRecords: (type: "prescriptions" | "stock") => void;
+  onOpenRecords: (type: "prescriptions" | "stock" | "activity") => void;
   onOpenProfile: () => void;
   onLogout: () => void;
+  onOpenTelegramConnect: () => void;
 }) {
+  const totalCount = dosesStats.total || 4;
+  const takenCount = dosesStats.taken;
+  const percentage = Math.round((takenCount / Math.max(1, totalCount)) * 100);
+  const allCompleted = takenCount >= totalCount && totalCount > 0;
+
   return (
     <main className="home-screen">
       <header className="home-header">
@@ -419,7 +657,7 @@ function HomeScreen({
             type="button"
             className="header-logout-btn"
             onClick={onLogout}
-            title="Sign out of demo session"
+            title="Sign out of session"
           >
             Sign Out
           </button>
@@ -437,71 +675,133 @@ function HomeScreen({
           <Image src="/assets/icons/chevron-down.svg" alt="" width={14} height={14} />
         </span>
       </header>
+
       <div className="nav-pill-group">
         <button type="button" className="nav-pill nav-pill--active">
-          Meena&apos;s Routine
+          {patientData.name}&apos;s Routine
         </button>
         <button type="button" className="nav-pill" onClick={onOpenSetup}>
           Setup Walkthrough
         </button>
-        <button type="button" className="nav-pill" onClick={onLogout} title="Open Demo Login Page">
-          Demo Login
+        <button type="button" className="nav-pill" onClick={() => onOpenRecords("activity")}>
+          Activity Logs
         </button>
       </div>
+
       <div className="home-body">
+        {/* Telegram Connection Status Card */}
+        <div className={`telegram-connect-card ${telegramData.connected ? "" : "telegram-connect-card--pending"}`}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: telegramData.connected ? "#15803d" : "#b45309" }}>
+                {telegramData.connected ? "● Telegram Linked" : "○ Telegram Pending"}
+              </span>
+              <strong style={{ display: "block", fontSize: 13, color: "var(--color-text)", marginTop: 2 }}>
+                {telegramData.connected
+                  ? `Active with ${patientData.name} (${telegramData.botHandle || "@QuietcareReminderBot"})`
+                  : "Parent not connected on Telegram"}
+              </strong>
+              <p style={{ margin: "3px 0 0", fontSize: 11, color: "var(--color-text-2)" }}>
+                {telegramData.connected
+                  ? "Daily dose reminders are dispatched automatically."
+                  : "Connect your parent on Telegram to send dose prompts."}
+              </p>
+            </div>
+            {telegramData.connected ? (
+              <button
+                type="button"
+                className="dose-status-tag dose-status-tag--reminder_sent"
+                style={{ fontSize: 10, padding: "4px 8px" }}
+                onClick={() => onSendReminder(nextDose?.id)}
+                title="Trigger a live reminder message to parent's Telegram"
+              >
+                <Bell size={12} /> Test Reminder
+              </button>
+            ) : (
+              <Button
+                variant="primary"
+                onClick={onOpenTelegramConnect}
+                style={{ height: 32, fontSize: 11, padding: "0 12px" }}
+              >
+                Connect
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Today's Schedule Card */}
         <section className="today-card dose-card-interactive">
           <div className="section-title">
-            <h2>Today</h2>
-            <span style={{ background: doseTaken ? "#15803d" : "#16a34a" }}>
-              {doseTaken ? "All doses completed" : "On track"}
+            <h2>Today&apos;s Doses</h2>
+            <span style={{ background: allCompleted ? "#15803d" : "#16a34a" }}>
+              {allCompleted ? "All doses completed" : "On track"}
             </span>
           </div>
+
           <div className="today-grid">
             <div
               className="dose-ring"
               style={{
-                background: doseTaken
-                  ? "conic-gradient(#22c55e 0 100%, #22c55e 100% 100%)"
-                  : "conic-gradient(#22c55e 0 50%, #cbd5e1 50% 100%)",
+                background: `conic-gradient(#22c55e 0 ${percentage}%, #cbd5e1 ${percentage}% 100%)`,
               }}
             >
-              <span>{doseTaken ? "Today" : "Doses"}</span>
-              <b>{doseTaken ? "2 / 2" : "1 / 2"}</b>
+              <span>Today</span>
+              <b>{takenCount} / {totalCount}</b>
             </div>
+
             <div className="dose-times">
-              <div className="dose-item-action">
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <Sun size={24} />
-                  <span>
-                    2:30 PM<strong>After Lunch</strong>
-                  </span>
-                </div>
-                <span className="dose-toggle-tag dose-toggle-tag--taken">✓ Taken</span>
-              </div>
-              <div
-                className="dose-item-action"
-                onClick={onToggleDose}
-                title="Click to toggle dose taken"
-                role="button"
-                tabIndex={0}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <Moon size={24} />
-                  <span>
-                    7:30 PM<strong>Before Dinner</strong>
-                  </span>
-                </div>
-                <span
-                  className={`dose-toggle-tag ${
-                    doseTaken ? "dose-toggle-tag--taken" : ""
-                  }`}
-                >
-                  {doseTaken ? "✓ Taken" : "Mark Taken"}
-                </span>
-              </div>
+              {dosesList.map((dose) => {
+                const isNight = dose.timing.toLowerCase().includes("dinner") || dose.timing.toLowerCase().includes("bed");
+                const isTaken = dose.status === "taken";
+                const isSent = dose.status === "reminder_sent";
+                const isNotYet = dose.status === "not_yet";
+                const isMissed = dose.status === "missed";
+
+                return (
+                  <div className="dose-item-action" key={dose.id}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+                      {isNight ? <Moon size={20} /> : <Sun size={20} />}
+                      <div style={{ minWidth: 0 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, display: "block" }}>
+                          {dose.scheduledTimeLabel}
+                          <strong style={{ fontWeight: 500, marginLeft: 6, fontSize: 11, color: "var(--color-text-2)" }}>
+                            {dose.timing}
+                          </strong>
+                        </span>
+                        <span style={{ display: "block", fontSize: 11, color: "var(--color-text-3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {dose.medicineName} ({dose.doseAmount})
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      className={`dose-status-tag dose-status-tag--${dose.status}`}
+                      onClick={() => onToggleDoseStatus(dose.id, dose.status)}
+                      title={`Status: ${dose.status}. Click to change.`}
+                    >
+                      {isTaken && "✓ Taken"}
+                      {isSent && "🔔 Sent"}
+                      {isNotYet && "⏰ Postponed"}
+                      {isMissed && "⚠️ Missed"}
+                      {!isTaken && !isSent && !isNotYet && !isMissed && "⏳ Scheduled"}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
+            {lastDose?.takenAt && (
+              <div style={{ marginTop: 10, padding: "6px 10px", background: "#f8fafc", borderRadius: 8, fontSize: 11, color: "var(--color-text-3)", display: "flex", justifyContent: "space-between" }}>
+                <span>Last confirmed dose:</span>
+                <strong style={{ color: "#15803d" }}>
+                  {lastDose.medicineName} ({new Date(lastDose.takenAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })})
+                </strong>
+              </div>
+            )}
           </div>
         </section>
+
+        {/* Refill Alert */}
         <section className="refill-alert">
           <b>!</b>
           <span>
@@ -511,6 +811,8 @@ function HomeScreen({
             Review
           </button>
         </section>
+
+        {/* Prepared Pouches */}
         <h2 className="home-section-title">Prepared Pouches</h2>
         <section className="pouches-card">
           <div>
@@ -527,18 +829,27 @@ function HomeScreen({
             <Button onClick={onOpenRoutine}>View routine</Button>
           </div>
         </section>
-        <h2 className="home-section-title">Records</h2>
-        <div className="record-grid">
+
+        {/* Records */}
+        <h2 className="home-section-title">Records & Telemetry</h2>
+        <div className="record-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           <button type="button" onClick={() => onOpenRecords("prescriptions")}>
-            <Image src="/assets/illustrations/prescriptions-record.png" alt="" width={100} height={100} />
+            <Image src="/assets/illustrations/prescriptions-record.png" alt="" width={72} height={72} />
             <span>Prescriptions</span>
           </button>
           <button type="button" onClick={() => onOpenRecords("stock")}>
-            <Image src="/assets/illustrations/stock-record.png" alt="" width={100} height={100} />
+            <Image src="/assets/illustrations/stock-record.png" alt="" width={72} height={72} />
             <span>Stock ({medicinesList.length})</span>
+          </button>
+          <button type="button" onClick={() => onOpenRecords("activity")}>
+            <div style={{ width: 72, height: 72, display: "grid", placeItems: "center", background: "#f1f5f9", borderRadius: 16 }}>
+              <ActivityIcon size={32} />
+            </div>
+            <span>Activity Log</span>
           </button>
         </div>
       </div>
+
       <button type="button" className="fab" onClick={onAddPrescription}>
         <Plus /> Add prescription
       </button>
@@ -551,14 +862,32 @@ export function QuietcareApp() {
   const [patientData, setPatientData] = useState<PatientProfile>(initialPatient);
   const [medicinesData, setMedicinesData] = useState<Medicine[]>(initialMedicinesList);
   const [prescriptionsData, setPrescriptionsData] = useState<PrescriptionRecord[]>([]);
+  const [dosesData, setDosesData] = useState<Dose[]>([]);
+  const [dosesStats, setDosesStats] = useState({
+    total: 4,
+    taken: 2,
+    pending: 2,
+    reminderSent: 0,
+    missed: 0,
+    notYet: 0,
+  });
+  const [lastDose, setLastDose] = useState<Dose | null>(null);
+  const [nextDose, setNextDose] = useState<Dose | null>(null);
+  const [activityLogsData, setActivityLogsData] = useState<ActivityLog[]>([]);
+
   const [telegramData, setTelegramData] = useState<TelegramConnection>({
     connected: false,
     botHandle: "@QuietcareReminderBot",
-    deepLink: "https://t.me/QuietcareReminderBot?start=qc_meena_7829",
+    botUsername: "QuietcareReminderBot",
+    deepLink: "https://t.me/QuietcareReminderBot?start=qc_meena_demo",
+    parentName: "Meena",
   });
+
   const [serverLive, setServerLive] = useState(true);
-  const [doseTaken, setDoseTaken] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
+
+  const [ocrResultSource, setOcrResultSource] = useState<"gemini-3.8-flash" | "demo_fallback">("demo_fallback");
+  const [ocrNotice, setOcrNotice] = useState<string>("");
 
   const [prescriptionModal, setPrescriptionModal] = useState(false);
   const [medicineModal, setMedicineModal] = useState(false);
@@ -568,14 +897,22 @@ export function QuietcareApp() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [selectedName, setSelectedName] = useState<string>();
 
-  const coverage = useMemo(() => calculateCoverage(medicinesData), [medicinesData]);
-
-  const showToast = (msg: string) => {
+  const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage((prev) => (prev === msg ? null : prev)), 2800);
-  };
+  }, []);
 
-  const refreshState = async () => {
+  const refreshDoses = useCallback(async () => {
+    const res = await fetchTodayDoses();
+    if (res) {
+      setDosesData(res.doses);
+      setDosesStats(res.stats);
+      setLastDose(res.lastDose);
+      setNextDose(res.nextDose);
+    }
+  }, []);
+
+  const refreshState = useCallback(async () => {
     const state = await fetchAppState();
     if (state) {
       setServerLive(true);
@@ -583,21 +920,38 @@ export function QuietcareApp() {
       if (state.medicines && state.medicines.length > 0) setMedicinesData(state.medicines);
       if (state.prescriptions) setPrescriptionsData(state.prescriptions);
       if (state.telegram) setTelegramData(state.telegram);
+      if (state.activityLogs) setActivityLogsData(state.activityLogs);
+      if (state.doses && state.doses.length > 0) {
+        setDosesData(state.doses);
+      }
     }
-  };
+    await refreshDoses();
+  }, [refreshDoses]);
 
   useEffect(() => {
-    let active = true;
-    fetchAppState().then((state) => {
-      if (!active || !state) return;
+    let isMounted = true;
+    fetchAppState().then(async (state) => {
+      if (!isMounted || !state) return;
       setServerLive(true);
       if (state.patient) setPatientData(state.patient);
       if (state.medicines && state.medicines.length > 0) setMedicinesData(state.medicines);
       if (state.prescriptions) setPrescriptionsData(state.prescriptions);
       if (state.telegram) setTelegramData(state.telegram);
+      if (state.activityLogs) setActivityLogsData(state.activityLogs);
+      if (state.doses && state.doses.length > 0) {
+        setDosesData(state.doses);
+      }
+
+      const dosesRes = await fetchTodayDoses();
+      if (!isMounted || !dosesRes) return;
+      setDosesData(dosesRes.doses);
+      setDosesStats(dosesRes.stats);
+      setLastDose(dosesRes.lastDose);
+      setNextDose(dosesRes.nextDose);
     });
+
     return () => {
-      active = false;
+      isMounted = false;
     };
   }, []);
 
@@ -608,23 +962,70 @@ export function QuietcareApp() {
       // Ignore
     }
     setIsAuthenticated(false);
-    showToast("Signed out of demo session");
+    showToast("Signed out of session");
   };
 
+  // Screen Transitions (Note: "waiting" is purposefully excluded from timer transitions!)
   useEffect(() => {
     const transitions: Partial<Record<FlowScreen, FlowScreen>> = {
       "prescription-loading": "prescription-review",
       "medicine-loading": "medicine-review",
       "routine-loading": "routine-ready",
       "routine-ready": "labels-choice",
-      waiting: "connected",
     };
     const next = transitions[progress.screen];
     if (!next) return;
-    const delay = progress.screen === "waiting" ? 2400 : 1400;
-    const timer = window.setTimeout(() => setProgress((current) => ({ ...current, screen: next })), delay);
+    const timer = window.setTimeout(
+      () => setProgress((current) => ({ ...current, screen: next })),
+      1400
+    );
     return () => window.clearTimeout(timer);
   }, [progress.screen]);
+
+  // REAL Telegram Polling on the "waiting" screen
+  useEffect(() => {
+    if (progress.screen !== "waiting") return;
+
+    let isMounted = true;
+
+    // Check status immediately
+    fetchTelegramStatus().then((status) => {
+      if (!isMounted || !status) return;
+      if (status.connected) {
+        setTelegramData((prev) => ({ ...prev, ...status }));
+        showToast("✓ Telegram connected! Moving forward...");
+        setProgress((current) => ({ ...current, screen: "connected" }));
+      }
+    });
+
+    // Poll every 2.5 seconds
+    const interval = setInterval(async () => {
+      const status = await fetchTelegramStatus();
+      if (!isMounted || !status) return;
+
+      setTelegramData((prev) => ({
+        ...prev,
+        connected: status.connected,
+        parentName: status.parentName,
+        botHandle: status.botHandle,
+        botUsername: status.botUsername,
+        deepLink: status.deepLink || prev.deepLink,
+        connectedAt: status.connectedAt,
+        isConfigured: status.isConfigured,
+      }));
+
+      if (status.connected) {
+        clearInterval(interval);
+        showToast("✓ Parent tapped Start! Telegram connected.");
+        setProgress((current) => ({ ...current, screen: "connected" }));
+      }
+    }, 2500);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [progress.screen, showToast]);
 
   const go = (screen: FlowScreen) => setProgress((current) => ({ ...current, screen }));
   const back = () => go(backMap[progress.screen] ?? "welcome");
@@ -646,7 +1047,18 @@ export function QuietcareApp() {
       const res = await uploadPrescriptionFile(file);
       if (res.success && res.medicines) {
         setMedicinesData(res.medicines);
-        showToast("Prescription analyzed by backend OCR");
+        if (res.ocrResult) {
+          setOcrResultSource(res.ocrResult.source);
+          setOcrNotice(res.ocrResult.notice || "");
+          if (res.ocrResult.source === "gemini-3.8-flash") {
+            showToast("✨ Prescription analyzed live with Gemini 3.8 Flash");
+          } else {
+            showToast("Prescription loaded with verified clinical fallback");
+          }
+        }
+        await refreshState();
+      } else {
+        showToast("Using demo prescription data");
       }
     }
   };
@@ -659,6 +1071,7 @@ export function QuietcareApp() {
       prev.map((m) => (m.id === "vertin" ? { ...m, timing, uncertain: false } : m))
     );
     await updateMedicineTiming("vertin", timing, true);
+    await refreshState();
   };
 
   const handleSaveQty = async (qty: number) => {
@@ -668,6 +1081,7 @@ export function QuietcareApp() {
       prev.map((m) => (m.id === "vertin" ? { ...m, quantity: qty } : m))
     );
     await updateMedicineQuantity("vertin", qty);
+    await refreshState();
   };
 
   const handleCreateRoutine = async () => {
@@ -679,43 +1093,70 @@ export function QuietcareApp() {
     );
     if (res.success && res.coverageDays) {
       showToast(`Routine saved: ${res.coverageDays} days coverage`);
+      await refreshState();
     }
   };
 
   const handleShareTelegram = async () => {
     go("waiting");
-    await connectTelegram("create");
-    showToast("Telegram connect link ready");
+    const res = await connectTelegram("create");
+    if (res.success && res.deepLink) {
+      setTelegramData((prev) => ({
+        ...prev,
+        deepLink: res.deepLink || prev.deepLink,
+      }));
+    }
+    showToast("Telegram invite link generated");
+  };
+
+  const handleDevConnectTelegram = async () => {
+    const res = await connectTelegram("test_connect_dev");
+    if (res.success && res.telegram) {
+      setTelegramData(res.telegram);
+      showToast("✓ Telegram connected in test mode!");
+      go("connected");
+    }
   };
 
   const handleFinishTelegram = async () => {
-    await connectTelegram("confirm");
-    setTelegramData((prev) => ({ ...prev, connected: true }));
-    showToast("Telegram connected successfully!");
+    await refreshState();
+    showToast("Telegram reminder routine ready!");
     go("home");
   };
 
-  const handleSendTestReminder = async () => {
-    const res = await connectTelegram("send_test_reminder");
+  const handleSendTestReminder = async (doseId?: string) => {
+    const res = await triggerTestDoseReminder(doseId);
     if (res.success) {
-      showToast("Test dose reminder sent to Telegram!");
+      showToast(`✓ ${res.message}`);
+      await refreshDoses();
+      await refreshState();
+    } else {
+      showToast(`Notice: ${res.message}`);
+    }
+  };
+
+  const handleToggleDoseStatus = async (doseId: string, currentStatus: DoseStatus) => {
+    const nextStatus: DoseStatus = currentStatus === "taken" ? "pending" : "taken";
+    const res = await updateDoseStatusApi(doseId, nextStatus, "caregiver_ui");
+    if (res.success) {
+      showToast(
+        nextStatus === "taken"
+          ? "✓ Marked dose as taken"
+          : "Dose marked as scheduled"
+      );
+      await refreshDoses();
+      await refreshState();
+    } else {
+      showToast("Failed to update dose status");
     }
   };
 
   const handleResetDatabase = async () => {
-    try {
-      const res = await fetch("/api/state", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reset" }),
-      });
-      if (res.ok) {
-        await refreshState();
-        showToast("Backend database reset to defaults");
-        setActiveDialog(null);
-      }
-    } catch {
-      showToast("Reset completed");
+    const ok = await resetBackendState();
+    if (ok) {
+      await refreshState();
+      showToast("Database restored to defaults");
+      setActiveDialog(null);
     }
   };
 
@@ -733,29 +1174,6 @@ export function QuietcareApp() {
       }
     } catch {
       showToast("Labels link ready");
-    }
-  };
-
-  const handleToggleDose = async () => {
-    const next = !doseTaken;
-    setDoseTaken(next);
-    if (next) {
-      showToast("✓ Marked Before Dinner dose as taken for Meena");
-      try {
-        await fetch("/api/activity", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            type: "dose_taken",
-            patientId: "meena",
-            details: { dose: "Before Dinner", time: "7:30 PM", recordedAt: new Date().toISOString() },
-          }),
-        });
-      } catch (err) {
-        console.error("Failed to log dose", err);
-      }
-    } else {
-      showToast("Before Dinner dose marked as pending");
     }
   };
 
@@ -803,8 +1221,13 @@ export function QuietcareApp() {
         <HomeScreen
           patientData={patientData}
           medicinesList={medicinesData}
-          doseTaken={doseTaken}
-          onToggleDose={handleToggleDose}
+          dosesList={dosesData}
+          dosesStats={dosesStats}
+          lastDose={lastDose}
+          nextDose={nextDose}
+          telegramData={telegramData}
+          onToggleDoseStatus={handleToggleDoseStatus}
+          onSendReminder={handleSendTestReminder}
           onAddPrescription={startNewPrescription}
           onOpenSetup={() => go("welcome")}
           onOpenReview={() => setActiveDialog("refill")}
@@ -812,8 +1235,10 @@ export function QuietcareApp() {
           onOpenPrepare={() => setActiveDialog("prepare")}
           onOpenRecords={(type) => setActiveDialog(type)}
           onOpenProfile={() => setActiveDialog("profile")}
+          onOpenTelegramConnect={() => go("connect")}
           onLogout={handleLogout}
         />
+
         {activeDialog === "refill" && (
           <DetailModal title="Refill Alert" onClose={() => setActiveDialog(null)}>
             <p style={{ margin: "8px 0 12px", color: "var(--color-text-2)", fontSize: 13, lineHeight: "19px" }}>
@@ -822,7 +1247,7 @@ export function QuietcareApp() {
             <div style={{ background: "var(--color-surface)", padding: 12, borderRadius: 10, border: "1px solid var(--color-border-2)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 12 }}>
                 <span>Daily Dosage:</span>
-                <strong>1 tablet after food</strong>
+                <strong>1 tablet before dinner</strong>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
                 <span>Suggested Reorder:</span>
@@ -831,24 +1256,30 @@ export function QuietcareApp() {
             </div>
           </DetailModal>
         )}
+
         {activeDialog === "routine" && (
-          <DetailModal title={`${patientData.name}'s Routine`} onClose={() => setActiveDialog(null)}>
+          <DetailModal title={`${patientData.name}'s Routine Schedule`} onClose={() => setActiveDialog(null)}>
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
               <div style={{ padding: 12, borderRadius: 10, background: "var(--color-surface)", border: "1px solid var(--color-border-2)" }}>
-                <strong style={{ display: "block", fontSize: 13, color: "var(--color-text)" }}>Morning ({progress.breakfast})</strong>
+                <strong style={{ display: "block", fontSize: 13, color: "var(--color-text)" }}>
+                  Morning ({progress.breakfast})
+                </strong>
                 <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--color-text-2)" }}>
-                  Glycomet 500mg (1 tab) • Vertin 2mg (1 tab) after breakfast
+                  Pantop 40mg (1 tab, before food) • Metformin 500mg & Vertin 2mg (after breakfast)
                 </p>
               </div>
               <div style={{ padding: 12, borderRadius: 10, background: "var(--color-surface)", border: "1px solid var(--color-border-2)" }}>
-                <strong style={{ display: "block", fontSize: 13, color: "var(--color-text)" }}>Night ({progress.dinner})</strong>
+                <strong style={{ display: "block", fontSize: 13, color: "var(--color-text)" }}>
+                  Dinner & Night ({progress.dinner})
+                </strong>
                 <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--color-text-2)" }}>
-                  Telma 40mg (1 tab) • Pan 40mg (1 tab) after dinner
+                  Telma 40mg (1 tab, before dinner) • Vertin 2mg (1 tab, bedtime)
                 </p>
               </div>
             </div>
           </DetailModal>
         )}
+
         {activeDialog === "prepare" && (
           <DetailModal title="Prepare Pouches" onClose={() => setActiveDialog(null)}>
             <p style={{ fontSize: 12, color: "var(--color-text-2)", lineHeight: "18px" }}>
@@ -867,18 +1298,24 @@ export function QuietcareApp() {
             </div>
           </DetailModal>
         )}
+
         {activeDialog === "prescriptions" && (
           <DetailModal title="Prescription Records" onClose={() => setActiveDialog(null)}>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
               {prescriptionsData.length > 0 ? (
                 prescriptionsData.map((rx) => (
                   <div key={rx.id} style={{ padding: 12, borderRadius: 10, background: "var(--color-surface)", border: "1px solid var(--color-border-2)" }}>
-                    <strong style={{ fontSize: 12 }}>{rx.fileName}</strong>
-                    <span style={{ display: "block", fontSize: 11, color: "var(--color-text-2)", marginTop: 2 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <strong style={{ fontSize: 12 }}>{rx.fileName}</strong>
+                      <span className={rx.ocrSource === "gemini-3.8-flash" ? "badge-ai" : "badge-demo"}>
+                        {rx.ocrSource === "gemini-3.8-flash" ? "Gemini OCR" : "Fallback"}
+                      </span>
+                    </div>
+                    <span style={{ display: "block", fontSize: 11, color: "var(--color-text-2)", marginTop: 4 }}>
                       {rx.doctorName || "Dr. S. Kulkarni"} • {rx.clinic || "Clinic"}
                     </span>
-                    <span style={{ display: "block", fontSize: 10, color: "var(--color-text-3)", marginTop: 4 }}>
-                      Status: {rx.status} • {rx.courseDays}-day course
+                    <span style={{ display: "block", fontSize: 10, color: "var(--color-text-3)", marginTop: 2 }}>
+                      Status: {rx.status} • {rx.courseDays}-day course • {rx.medicinesFound} medicines
                     </span>
                   </div>
                 ))
@@ -896,10 +1333,11 @@ export function QuietcareApp() {
             </div>
           </DetailModal>
         )}
+
         {activeDialog === "stock" && (
           <DetailModal title="Medicines Inventory" onClose={() => setActiveDialog(null)}>
             <p style={{ fontSize: 11, color: "var(--color-text-3)", margin: "4px 0 12px" }}>
-              Live inventory synced with backend API:
+              Live inventory synced with backend data layer:
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
               {medicinesData.map((m) => (
@@ -920,6 +1358,7 @@ export function QuietcareApp() {
                           prev.map((item) => (item.id === m.id ? { ...item, quantity: newQty } : item))
                         );
                         await updateMedicineQuantity(m.id, newQty);
+                        await refreshState();
                       }}
                       title="Decrease quantity"
                     >
@@ -937,6 +1376,7 @@ export function QuietcareApp() {
                           prev.map((item) => (item.id === m.id ? { ...item, quantity: newQty } : item))
                         );
                         await updateMedicineQuantity(m.id, newQty);
+                        await refreshState();
                       }}
                       title="Increase quantity"
                     >
@@ -948,8 +1388,32 @@ export function QuietcareApp() {
             </div>
           </DetailModal>
         )}
+
+        {activeDialog === "activity" && (
+          <DetailModal title="Caregiver Activity Log" onClose={() => setActiveDialog(null)}>
+            <div className="activity-list">
+              {activityLogsData.length > 0 ? (
+                activityLogsData.map((log) => (
+                  <div key={log.id} className="activity-item">
+                    <strong>{log.title}</strong>
+                    <p>{log.description}</p>
+                    <time>
+                      {new Date(log.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })},{" "}
+                      {new Date(log.timestamp).toLocaleDateString([], { month: "short", day: "numeric" })}
+                    </time>
+                  </div>
+                ))
+              ) : (
+                <p style={{ fontSize: 12, color: "var(--color-text-3)", textAlign: "center", padding: 20 }}>
+                  No recent activity records.
+                </p>
+              )}
+            </div>
+          </DetailModal>
+        )}
+
         {activeDialog === "profile" && (
-          <DetailModal title="Caregiver & Backend Settings" onClose={() => setActiveDialog(null)}>
+          <DetailModal title="Caregiver & Integration Settings" onClose={() => setActiveDialog(null)}>
             <div style={{ fontSize: 12, color: "var(--color-text-2)", display: "flex", flexDirection: "column", gap: 12, marginTop: 10 }}>
               <div>
                 <span style={{ color: "var(--color-text-3)", display: "block", fontSize: 11 }}>Parent Name:</span>
@@ -960,21 +1424,22 @@ export function QuietcareApp() {
                 <strong style={{ color: "var(--color-text)" }}>{progress.language}</strong>
               </div>
               <div>
-                <span style={{ color: "var(--color-text-3)", display: "block", fontSize: 11 }}>Scheduled Meal Times:</span>
+                <span style={{ color: "var(--color-text-3)", display: "block", fontSize: 11 }}>Meal Routine:</span>
                 <strong style={{ color: "var(--color-text)" }}>Breakfast: {progress.breakfast} | Dinner: {progress.dinner}</strong>
               </div>
               <div>
-                <span style={{ color: "var(--color-text-3)", display: "block", fontSize: 11 }}>Telegram Connection:</span>
+                <span style={{ color: "var(--color-text-3)", display: "block", fontSize: 11 }}>Telegram Bot Link:</span>
                 <strong style={{ color: telegramData.connected ? "#10b981" : "#f59e0b" }}>
-                  {telegramData.connected ? "Active & Linked" : "Pending setup"} ({telegramData.botHandle})
+                  {telegramData.connected ? "Connected & Active" : "Pending connection"} ({telegramData.botHandle})
                 </strong>
               </div>
+
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
-                <Button variant="secondary" onClick={handleSendTestReminder}>
-                  Send Test Telegram Reminder
+                <Button variant="secondary" onClick={() => handleSendTestReminder(nextDose?.id)}>
+                  Dispatch Test Telegram Reminder
                 </Button>
                 <Button variant="danger" onClick={handleResetDatabase}>
-                  Reset Backend State to Default
+                  Reset Database to Default State
                 </Button>
                 <Button
                   variant="secondary"
@@ -984,7 +1449,7 @@ export function QuietcareApp() {
                   }}
                   style={{ borderColor: "#fca5a5", color: "#dc2626" }}
                 >
-                  Sign Out (Demo Session)
+                  Sign Out
                 </Button>
               </div>
             </div>
@@ -1006,12 +1471,18 @@ export function QuietcareApp() {
             <button type="button" className="nav-pill nav-pill--active">
               Setup Walkthrough
             </button>
-            <button type="button" className="nav-pill" onClick={handleLogout} title="Open Demo Login Page">
-              Demo Login
+            <button type="button" className="nav-pill" onClick={handleLogout} title="Sign Out">
+              Sign Out
             </button>
           </div>
           <div className="welcome-photo">
-            <Image src="/assets/images/welcome-caregiver.png" alt="A caregiver and her parent reviewing medicine information" fill priority sizes="342px" />
+            <Image
+              src="/assets/images/welcome-caregiver.png"
+              alt="A caregiver and her parent reviewing medicine information"
+              fill
+              priority
+              sizes="342px"
+            />
           </div>
           <div className="brand-mark">
             <Image src="/assets/brand/quietcare-logo.png" alt="Quietcare" width={94} height={94} priority />
@@ -1032,27 +1503,12 @@ export function QuietcareApp() {
               <Button variant="secondary" onClick={() => go("prescription-upload")}>
                 + Set Up New Prescription
               </Button>
-              <button
-                type="button"
-                onClick={handleLogout}
-                style={{
-                  background: "transparent",
-                  border: 0,
-                  color: "#64748b",
-                  fontSize: 11,
-                  padding: "4px 0",
-                  cursor: "pointer",
-                  textAlign: "center",
-                  textDecoration: "underline",
-                }}
-              >
-                Sign out of demo session
-              </button>
             </div>
           </Bottom>
         </main>
       );
       break;
+
     case "prescription-upload":
       content = (
         <main className="screen-content">
@@ -1061,7 +1517,7 @@ export function QuietcareApp() {
             <br />
             prescription
           </h1>
-          <p>We&apos;ll read it and build a clear medicine routine for your parent.</p>
+          <p>We&apos;ll read it with Gemini AI and build a clear routine for your parent.</p>
           <CaptureArt kind="prescription" />
           <UploadActions
             selectedName={selectedName}
@@ -1071,9 +1527,16 @@ export function QuietcareApp() {
         </main>
       );
       break;
+
     case "prescription-loading":
-      content = <LoadingScreen title="Reading your prescription" detail="Finding medicine names, doses and timings with Gemini AI…" />;
+      content = (
+        <LoadingScreen
+          title="Reading your prescription"
+          detail="Finding medicine names, doses and timings with Gemini AI…"
+        />
+      );
       break;
+
     case "prescription-review":
       content = (
         <PrescriptionReview
@@ -1081,12 +1544,15 @@ export function QuietcareApp() {
           medicinesList={medicinesData}
           patientName={patientData.prescriptionName}
           courseDays={patientData.courseDays}
+          ocrSource={ocrResultSource}
+          ocrNotice={ocrNotice}
           onEdit={() => setPrescriptionModal(true)}
           onExpand={() => setLightboxSrc("/assets/images/prescription.png")}
           onContinue={() => go("medicine-upload")}
         />
       );
       break;
+
     case "medicine-upload":
       content = (
         <main className="screen-content">
@@ -1094,7 +1560,12 @@ export function QuietcareApp() {
           <p>We&apos;ll match them to the prescription and show how many doses can be prepared.</p>
           <CaptureArt kind="medicine" />
           <ul className="capture-tips">
-            {["Place medicines on a flat surface", "Keep names facing up", "Avoid overlapping packages", "Use good lighting"].map((tip) => (
+            {[
+              "Place medicines on a flat surface",
+              "Keep names facing up",
+              "Avoid overlapping packages",
+              "Use good lighting",
+            ].map((tip) => (
               <li key={tip}>
                 <span>
                   <Check size={11} />
@@ -1107,12 +1578,25 @@ export function QuietcareApp() {
         </main>
       );
       break;
+
     case "medicine-loading":
-      content = <LoadingScreen title="Matching medicines" detail="Comparing the medicines with the prescription…" />;
+      content = (
+        <LoadingScreen
+          title="Matching medicines"
+          detail="Comparing the medicines with the prescription…"
+        />
+      );
       break;
+
     case "medicine-review":
-      content = <MedicineReview onEdit={() => setMedicineModal(true)} onContinue={() => go("personalise")} />;
+      content = (
+        <MedicineReview
+          onEdit={() => setMedicineModal(true)}
+          onContinue={() => go("personalise")}
+        />
+      );
       break;
+
     case "personalise":
       content = (
         <main className="screen-content">
@@ -1125,7 +1609,10 @@ export function QuietcareApp() {
           <div className="form-stack">
             <label>
               Preferred language
-              <select value={progress.language} onChange={(event) => setProgress({ ...progress, language: event.target.value })}>
+              <select
+                value={progress.language}
+                onChange={(event) => setProgress({ ...progress, language: event.target.value })}
+              >
                 {languages.map((value) => (
                   <option key={value}>{value}</option>
                 ))}
@@ -1135,7 +1622,10 @@ export function QuietcareApp() {
               <legend>Usual meal times</legend>
               <label>
                 Breakfast
-                <select value={progress.breakfast} onChange={(event) => setProgress({ ...progress, breakfast: event.target.value })}>
+                <select
+                  value={progress.breakfast}
+                  onChange={(event) => setProgress({ ...progress, breakfast: event.target.value })}
+                >
                   {mealTimes.map((value) => (
                     <option key={value}>{value}</option>
                   ))}
@@ -1143,7 +1633,10 @@ export function QuietcareApp() {
               </label>
               <label>
                 Dinner
-                <select value={progress.dinner} onChange={(event) => setProgress({ ...progress, dinner: event.target.value })}>
+                <select
+                  value={progress.dinner}
+                  onChange={(event) => setProgress({ ...progress, dinner: event.target.value })}
+                >
                   {dinnerTimes.map((value) => (
                     <option key={value}>{value}</option>
                   ))}
@@ -1152,72 +1645,107 @@ export function QuietcareApp() {
             </fieldset>
           </div>
           <Bottom>
-            <Button onClick={handleCreateRoutine}>Create Routine</Button>
+            <Button onClick={handleCreateRoutine}>Create routine</Button>
           </Bottom>
         </main>
       );
       break;
+
     case "routine-loading":
-      content = <LoadingScreen title="Creating your routine" detail="Calculating doses and available days…" />;
+      content = (
+        <LoadingScreen
+          title="Creating the routine"
+          detail="Organizing doses, instructions and calculating coverage days…"
+        />
+      );
       break;
+
     case "routine-ready":
       content = (
-        <main className="center-screen">
-          <span className="success-check">
-            <Check size={30} />
-          </span>
-          <h1>Your routine is ready</h1>
-          <p>The available medicines will cover {coverage} days.</p>
-        </main>
-      );
-      break;
-    case "labels-choice":
-      content = (
-        <main className="screen-content">
-          <h1>
-            Would you like to prepare
-            <br />
-            labelled medicine pouches?
-          </h1>
-          <p>Each pouch shows what your parent takes and when. We&apos;ll create the labels and guide you through packing.</p>
-          <div className="choice-illustration">
-            <Image src="/assets/illustrations/label-choice.png" alt="A hand placing a label on a medicine pouch" width={310} height={326} />
+        <main className="screen-content ready-screen">
+          <div className="ready-top">
+            <div className="ready-pill">Ready to pack</div>
+            <h1>
+              {patientData.name}&apos;s routine
+              <br />
+              is ready
+            </h1>
+            <p>You have enough medicine to prepare pouches for</p>
+            <div className="days-callout">
+              <strong>{patientData.availableDays} days</strong>
+              <span>Coverage ready</span>
+            </div>
+          </div>
+          <div className="ready-illustration">
+            <Image
+              src="/assets/illustrations/routine-ready.png"
+              alt="Caregiver and parent celebrating a successful routine"
+              fill
+              priority
+              sizes="342px"
+            />
           </div>
           <Bottom>
-            <div className="split-actions">
-              <Button variant="secondary" onClick={() => go("connect")}>
-                Skip
-              </Button>
-              <Button onClick={() => go("labels")}>Yes, create labels</Button>
+            <Button onClick={() => go("labels-choice")}>Continue</Button>
+          </Bottom>
+        </main>
+      );
+      break;
+
+    case "labels-choice":
+      content = (
+        <main className="screen-content choice-screen">
+          <div className="choice-illustration">
+            <Image
+              src="/assets/illustrations/labels-choice.png"
+              alt="Options for printing or hand-writing pouch labels"
+              fill
+              sizes="342px"
+            />
+          </div>
+          <div className="choice-copy">
+            <h1>Print pouch labels?</h1>
+            <p>
+              Labels help your parent identify each pouch by meal time. You can print them or copy the details by hand.
+            </p>
+          </div>
+          <Bottom>
+            <div className="choice-actions">
+              <Button onClick={() => go("labels")}>View printable labels</Button>
+              <button
+                type="button"
+                className="skip-link"
+                onClick={() => go("pack")}
+              >
+                I&apos;ll write them by hand
+              </button>
             </div>
           </Bottom>
         </main>
       );
       break;
+
     case "labels":
       content = (
-        <main className="screen-content">
-          <h1>Prepare the medicine pouches</h1>
-          <p>Print these labels, cut them out and stick one on each pouch. Then return here to continue</p>
+        <main className="screen-content labels-screen">
+          <h1>Print pouch labels</h1>
+          <p>Print on sticker paper or plain paper to attach to each pouch.</p>
           <LabelsPreview />
+          <div className="labels-actions">
+            <Button variant="secondary" onClick={() => window.print()}>
+              <Download /> Print labels
+            </Button>
+            <Button variant="secondary" onClick={handleShareLabels}>
+              <Share /> Share
+            </Button>
+          </div>
           <Bottom>
-            <div className="split-actions">
-              <Button variant="secondary" onClick={handleShareLabels}>
-                <Share size={20} /> Share
-              </Button>
-              <Button
-                onClick={() => {
-                  showToast("Opening packing view...");
-                  go("pack");
-                }}
-              >
-                <Download size={20} /> Download pdf
-              </Button>
-            </div>
+            <Button onClick={() => go("pack")}>I&apos;ve printed the labels</Button>
           </Bottom>
         </main>
       );
       break;
+
     case "pack":
       content = (
         <main className="screen-content pack-screen">
@@ -1245,11 +1773,12 @@ export function QuietcareApp() {
             </span>
           </div>
           <Bottom>
-            <Button onClick={() => go("connect")}>Next round</Button>
+            <Button onClick={() => go("connect")}>Next step: Connect Telegram</Button>
           </Bottom>
         </main>
       );
       break;
+
     case "connect":
       content = (
         <main className="screen-content">
@@ -1278,27 +1807,128 @@ export function QuietcareApp() {
         </main>
       );
       break;
+
     case "waiting":
       content = (
         <main className="screen-content">
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <span className="waiting-pulse-dot" />
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#0284c7", textTransform: "uppercase" }}>
+              Waiting for Telegram confirmation
+            </span>
+          </div>
           <h1>Waiting for your parent</h1>
-          <p>We&apos;ll let you know when they open Telegram and tap Start.</p>
+          <p>We&apos;ll automatically advance as soon as they open the link and tap Start.</p>
+
           <div className="telegram-illustration">
             <Image src="/assets/illustrations/telegram-waiting.png" alt="Waiting for Telegram connection" fill sizes="342px" />
           </div>
+
+          <div style={{ background: "var(--color-surface)", padding: 12, borderRadius: 12, border: "1px solid var(--color-border-2)", marginTop: 8 }}>
+            <span style={{ fontSize: 11, color: "var(--color-text-3)", display: "block", marginBottom: 6 }}>
+              Personal invite link for {patientData.name}:
+            </span>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                type="text"
+                readOnly
+                value={telegramData.deepLink}
+                style={{
+                  fontSize: 11,
+                  padding: "6px 8px",
+                  borderRadius: 6,
+                  border: "1px solid var(--color-border)",
+                  flex: 1,
+                  background: "white",
+                  color: "var(--color-text-2)",
+                }}
+              />
+              <button
+                type="button"
+                className="button button--secondary"
+                style={{ height: 32, fontSize: 11, padding: "0 10px" }}
+                onClick={() => {
+                  navigator.clipboard.writeText(telegramData.deepLink);
+                  showToast("Copied Telegram link to clipboard");
+                }}
+              >
+                Copy
+              </button>
+            </div>
+
+            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+              <a
+                href={telegramData.deepLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: "#0284c7",
+                  textDecoration: "underline",
+                  padding: "4px 0",
+                }}
+              >
+                Open directly in Telegram ↗
+              </a>
+            </div>
+          </div>
+
+          <Bottom>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%" }}>
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  const status = await fetchTelegramStatus();
+                  if (status?.connected) {
+                    showToast("✓ Telegram connection confirmed!");
+                    go("connected");
+                  } else {
+                    showToast("Parent has not tapped Start yet. Waiting...");
+                  }
+                }}
+              >
+                Check Connection Status
+              </Button>
+
+              {/* Dev / Test mode button for instant local verification */}
+              <button
+                type="button"
+                onClick={handleDevConnectTelegram}
+                style={{
+                  background: "transparent",
+                  border: 0,
+                  color: "#64748b",
+                  fontSize: 11,
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                  padding: "4px 0",
+                  textAlign: "center",
+                }}
+              >
+                ⚡ Test Telegram Connect in Demo Mode (Skip external bot)
+              </button>
+            </div>
+          </Bottom>
         </main>
       );
       break;
+
     case "connected":
       content = (
         <main className="screen-content">
-          <h1>Your parent is connected</h1>
-          <p>Medicine reminders will begin with their next scheduled dose.</p>
+          <h1>Your parent is connected!</h1>
+          <p>
+            Medicine reminders will begin with their next scheduled dose via {telegramData.botHandle}.
+          </p>
           <div className="telegram-illustration">
             <Image src="/assets/illustrations/telegram-connected.png" alt="Telegram successfully connected" fill sizes="342px" />
           </div>
           <Bottom>
-            <Button onClick={handleFinishTelegram}>Finish Setup</Button>
+            <Button onClick={handleFinishTelegram}>Finish Setup & Go to Dashboard</Button>
           </Bottom>
         </main>
       );
@@ -1310,6 +1940,7 @@ export function QuietcareApp() {
       <StatusBar />
       <FlowHeader screen={progress.screen} onBack={back} onExit={() => go("home")} />
       {content}
+
       {toastMessage && (
         <div
           role="status"
@@ -1332,18 +1963,21 @@ export function QuietcareApp() {
           {toastMessage}
         </div>
       )}
+
       {prescriptionModal && (
         <EditPrescription
           onClose={() => setPrescriptionModal(false)}
           onSave={handleSaveTiming}
         />
       )}
+
       {medicineModal && (
         <EditMedicine
           onClose={() => setMedicineModal(false)}
           onSave={handleSaveQty}
         />
       )}
+
       {lightboxSrc && (
         <ImageLightbox
           src={lightboxSrc}
@@ -1351,6 +1985,7 @@ export function QuietcareApp() {
           onClose={() => setLightboxSrc(null)}
         />
       )}
+
       {uploadModal && (
         <UploadModal
           medicine={progress.screen === "medicine-upload"}
