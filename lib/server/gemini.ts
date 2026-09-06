@@ -37,8 +37,24 @@ const ALLOWED_MIME_TYPES = new Set([
 export async function analyzePrescriptionWithGemini(
   base64Data?: string,
   mimeType: string = "image/jpeg",
-  fileSizeBytes?: number
+  fileSizeBytes?: number,
+  isDemo: boolean = false
 ): Promise<ParsedPrescriptionResult> {
+  // If explicitly requested as demo prescription or no image provided
+  if (isDemo || !base64Data) {
+    return {
+      patientName: "Shobha Patil",
+      doctorName: "Dr. S. Kulkarni",
+      clinic: "Cardiology & Geriatric Care Clinic",
+      courseDays: 10,
+      medicines: getDemoMedicines(),
+      uncertainItemNotice: "Timing unclear for Vertin 2mg (1-0-1). Please confirm before routine generation.",
+      source: "demo_fallback",
+      confidence: 0.92,
+      notice: "Sample clinical prescription loaded (Demo Mode).",
+    };
+  }
+
   // 1. Validation: File size check (Max 10MB)
   if (fileSizeBytes && fileSizeBytes > 10 * 1024 * 1024) {
     throw new Error("Prescription image file size exceeds the 10MB limit.");
@@ -46,15 +62,19 @@ export async function analyzePrescriptionWithGemini(
 
   // Normalize and validate MIME type
   const normalizedMime = mimeType.toLowerCase();
-  if (base64Data && !ALLOWED_MIME_TYPES.has(normalizedMime)) {
+  if (!ALLOWED_MIME_TYPES.has(normalizedMime)) {
     throw new Error(`Unsupported image type (${mimeType}). Please upload a JPG, PNG, or WebP photo.`);
   }
 
   const ai = getGeminiClient();
+  if (!ai) {
+    throw new Error(
+      "GEMINI_API_KEY is not configured on the server. Please set GEMINI_API_KEY to analyze custom uploads, or click 'Try Demo Prescription' to test the full flow."
+    );
+  }
 
-  if (ai && base64Data) {
-    try {
-      const prompt = `You are an expert clinical pharmacy assistant for geriatric medicine management.
+  try {
+    const prompt = `You are an expert clinical pharmacy assistant for geriatric medicine management.
 Carefully analyze this prescription document image.
 
 Extract:
@@ -94,83 +114,74 @@ IMPORTANT: Output ONLY a valid JSON object matching this exact structure without
   "uncertainItemNotice": "string"
 }`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                inlineData: {
-                  data: base64Data,
-                  mimeType: normalizedMime,
-                },
+    const response = await ai.models.generateContent({
+      model: "gemini-3.8-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              inlineData: {
+                data: base64Data,
+                mimeType: normalizedMime,
               },
-              { text: prompt },
-            ],
-          },
-        ],
-      });
+            },
+            { text: prompt },
+          ],
+        },
+      ],
+    });
 
-      const responseText = response.text?.trim() || "";
-      const cleanedJson = responseText
-        .replace(/^```json/i, "")
-        .replace(/^```/i, "")
-        .replace(/```$/i, "")
-        .trim();
+    const responseText = response.text?.trim() || "";
+    const cleanedJson = responseText
+      .replace(/^```json/i, "")
+      .replace(/^```/i, "")
+      .replace(/```$/i, "")
+      .trim();
 
-      if (cleanedJson) {
-        const parsed = JSON.parse(cleanedJson);
-
-        if (Array.isArray(parsed.medicines) && parsed.medicines.length > 0) {
-          const validatedMedicines: Medicine[] = parsed.medicines.map((m: Partial<Medicine>, idx: number) => ({
-            id: m.id || `med_ai_${idx + 1}_${Date.now()}`,
-            name: String(m.name || `Medicine ${idx + 1}`).trim(),
-            strength: m.strength ? String(m.strength).trim() : undefined,
-            schedule: String(m.schedule || "1-0-1").trim(),
-            timing: String(m.timing || "After food").trim(),
-            days: Number(m.days) > 0 ? Number(m.days) : 10,
-            quantity: Number(m.quantity) > 0 ? Number(m.quantity) : 20,
-            instructions: m.instructions ? String(m.instructions).trim() : undefined,
-            uncertain: Boolean(m.uncertain),
-          }));
-
-          return {
-            patientName: parsed.patientName || "Shobha Patil",
-            doctorName: parsed.doctorName || "Dr. S. Kulkarni",
-            clinic: parsed.clinic || "Cardiology & Geriatric Care Clinic",
-            courseDays: Number(parsed.courseDays) > 0 ? Number(parsed.courseDays) : 10,
-            medicines: validatedMedicines,
-            uncertainItemNotice: parsed.uncertainItemNotice || (
-              validatedMedicines.some((m) => m.uncertain)
-                ? "Some medicine timings need caregiver verification"
-                : undefined
-            ),
-            source: "gemini-3.8-flash",
-            confidence: 0.98,
-            notice: "Prescription analyzed live using Gemini 3.8 Flash multimodal OCR.",
-          };
-        }
-      }
-    } catch (err) {
-      console.warn("[GeminiService] Live OCR failed or returned invalid JSON. Falling back to demo data.", err);
+    if (!cleanedJson) {
+      throw new Error("Gemini returned an empty response. Please try taking a clearer photo.");
     }
-  }
 
-  // Safe, verified demo fallback when GEMINI_API_KEY is unset or processing encounters an error
-  return {
-    patientName: "Shobha Patil",
-    doctorName: "Dr. S. Kulkarni",
-    clinic: "Cardiology & Geriatric Care Clinic",
-    courseDays: 10,
-    medicines: getDemoMedicines(),
-    uncertainItemNotice: "Timing unclear for Vertin 2mg (1-0-1). Please confirm before routine generation.",
-    source: "demo_fallback",
-    confidence: 0.92,
-    notice: !ai
-      ? "Demo fallback data used (GEMINI_API_KEY not configured on server)."
-      : "Demo fallback data used (Gemini OCR completed with fallback template).",
-  };
+    const parsed = JSON.parse(cleanedJson);
+
+    if (!Array.isArray(parsed.medicines) || parsed.medicines.length === 0) {
+      throw new Error("No medications could be recognized in this image. Please ensure the prescription text is legible.");
+    }
+
+    const validatedMedicines: Medicine[] = parsed.medicines.map((m: Partial<Medicine>, idx: number) => ({
+      id: m.id || `med_ai_${idx + 1}_${Date.now()}`,
+      name: String(m.name || `Medicine ${idx + 1}`).trim(),
+      strength: m.strength ? String(m.strength).trim() : undefined,
+      schedule: String(m.schedule || "1-0-1").trim(),
+      timing: String(m.timing || "After food").trim(),
+      days: Number(m.days) > 0 ? Number(m.days) : 10,
+      quantity: Number(m.quantity) > 0 ? Number(m.quantity) : 20,
+      instructions: m.instructions ? String(m.instructions).trim() : undefined,
+      uncertain: Boolean(m.uncertain),
+    }));
+
+    return {
+      patientName: parsed.patientName || "Prescription Patient",
+      doctorName: parsed.doctorName || "Treating Physician",
+      clinic: parsed.clinic || "Clinic / Hospital",
+      courseDays: Number(parsed.courseDays) > 0 ? Number(parsed.courseDays) : 10,
+      medicines: validatedMedicines,
+      uncertainItemNotice: parsed.uncertainItemNotice || (
+        validatedMedicines.some((m) => m.uncertain)
+          ? "Some medicine timings need caregiver verification"
+          : undefined
+      ),
+      source: "gemini-3.8-flash",
+      confidence: 0.98,
+      notice: "Prescription analyzed live using Gemini 3.8 Flash multimodal OCR.",
+    };
+  } catch (err) {
+    console.error("[GeminiService] Live OCR processing error:", err);
+    throw new Error(
+      `Prescription OCR failed: ${err instanceof Error ? err.message : "Unable to extract prescription details"}`
+    );
+  }
 }
 
 function getDemoMedicines(): Medicine[] {

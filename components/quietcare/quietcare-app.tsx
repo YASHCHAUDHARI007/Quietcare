@@ -22,6 +22,8 @@ import type {
 } from "@/types/quietcare";
 import {
   connectTelegram,
+  createMedicine,
+  deleteMedicine,
   fetchAppState,
   fetchTelegramStatus,
   fetchTodayDoses,
@@ -29,10 +31,11 @@ import {
   saveRoutineSettings,
   triggerTestDoseReminder,
   updateDoseStatusApi,
+  updateMedicine,
   updateMedicineQuantity,
-  updateMedicineTiming,
   uploadPrescriptionFile,
 } from "@/lib/client/api";
+import { generateDosePacks } from "@/lib/routine";
 import { Button } from "@/components/ui/button";
 import {
   ActivityIcon,
@@ -48,6 +51,7 @@ import {
   Plus,
   Share,
   Sun,
+  Trash,
   UserCircle,
 } from "./icons";
 import { LoginScreen } from "./login-screen";
@@ -183,7 +187,7 @@ function MedicineList({
 }: {
   medicineItems: Medicine[];
   timingConfirmed: boolean;
-  onEdit: () => void;
+  onEdit: (med: Medicine) => void;
 }) {
   return (
     <div className="medicine-list" role="list">
@@ -213,7 +217,7 @@ function MedicineList({
                 <button
                   type="button"
                   className="warn-pill"
-                  onClick={onEdit}
+                  onClick={() => onEdit(med)}
                   title="Timing unclear from prescription. Tap to confirm."
                 >
                   Confirm timing
@@ -240,33 +244,71 @@ function MedicineList({
   );
 }
 
-function EditPrescription({
+function EditPrescriptionModal({
+  medicine,
+  medicinesList,
   onClose,
   onSave,
 }: {
+  medicine: Medicine | null;
+  medicinesList: Medicine[];
   onClose: () => void;
-  onSave: (timing: string) => void;
+  onSave: (medId: string, timing: string, schedule: string) => void;
 }) {
-  const [selectedTiming, setSelectedTiming] = useState("After food");
+  const targetMed = medicine || medicinesList.find((m) => m.uncertain) || medicinesList[0];
+  const [selectedId, setSelectedId] = useState(targetMed?.id || "");
+  const currentMed = medicinesList.find((m) => m.id === selectedId) || targetMed;
+  const [selectedTiming, setSelectedTiming] = useState(currentMed?.timing || "After food");
+  const [selectedSchedule, setSelectedSchedule] = useState(currentMed?.schedule || "1-0-1");
+
   const timings = ["Before food", "With food", "After food", "At bedtime"];
+  const schedules = ["1-0-0", "0-1-0", "0-0-1", "1-0-1", "1-1-1"];
 
   return (
-    <div className="modal-scrim">
-      <section className="sheet" role="dialog" aria-modal="true">
+    <div className="modal-scrim" onClick={onClose}>
+      <section className="sheet" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-header">
-          <h2>Review uncertain timing</h2>
+          <h2>Confirm Medicine Timing</h2>
           <button onClick={onClose} aria-label="Close">
             <Image src="/assets/icons/close.svg" alt="" width={24} height={24} />
           </button>
         </div>
         <label>
-          Medicine Name
-          <input value="Vertin 2mg" readOnly />
+          Medicine
+          <select
+            value={selectedId}
+            onChange={(e) => {
+              const newId = e.target.value;
+              setSelectedId(newId);
+              const m = medicinesList.find((item) => item.id === newId);
+              if (m) {
+                setSelectedTiming(m.timing);
+                setSelectedSchedule(m.schedule);
+              }
+            }}
+          >
+            {medicinesList.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name} {m.uncertain ? "(Unclear timing)" : ""}
+              </option>
+            ))}
+          </select>
         </label>
+
         <label>
-          Dosage Days
-          <input value="3" readOnly />
+          Schedule
+          <select
+            value={selectedSchedule}
+            onChange={(e) => setSelectedSchedule(e.target.value)}
+          >
+            {schedules.map((s) => (
+              <option key={s} value={s}>
+                {s} ({s === "1-0-1" ? "Morning & Night" : s === "1-0-0" ? "Morning only" : s === "0-0-1" ? "Night only" : s})
+              </option>
+            ))}
+          </select>
         </label>
+
         <fieldset>
           <legend>When is it supposed to be taken</legend>
           {timings.map((timing) => (
@@ -288,7 +330,9 @@ function EditPrescription({
           <Button variant="danger" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => onSave(selectedTiming)}>Save & Confirm</Button>
+          <Button onClick={() => onSave(selectedId, selectedTiming, selectedSchedule)}>
+            Save & Confirm
+          </Button>
         </div>
       </section>
     </div>
@@ -298,10 +342,12 @@ function EditPrescription({
 function UploadActions({
   onChoose,
   onTake,
+  onDemo,
   selectedName,
 }: {
   onChoose: () => void;
   onTake: () => void;
+  onDemo?: () => void;
   selectedName?: string;
 }) {
   return (
@@ -317,6 +363,30 @@ function UploadActions({
           <Camera /> Take photo
         </Button>
       </div>
+      {onDemo && (
+        <button
+          type="button"
+          onClick={onDemo}
+          style={{
+            background: "#fffbeb",
+            border: "1px dashed #f59e0b",
+            borderRadius: 10,
+            padding: "9px 12px",
+            fontSize: 12,
+            fontWeight: 600,
+            color: "#92400e",
+            cursor: "pointer",
+            marginTop: 8,
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+          }}
+        >
+          🧪 Try Demo Prescription (Sample Clinical Rx)
+        </button>
+      )}
     </Bottom>
   );
 }
@@ -368,6 +438,7 @@ function PrescriptionReview({
   courseDays,
   ocrSource = "demo_fallback",
   ocrNotice,
+  uploadedImageUrl,
   onEdit,
   onContinue,
   onExpand,
@@ -378,7 +449,8 @@ function PrescriptionReview({
   courseDays: number;
   ocrSource?: "gemini-3.8-flash" | "demo_fallback";
   ocrNotice?: string;
-  onEdit: () => void;
+  uploadedImageUrl?: string;
+  onEdit: (med?: Medicine) => void;
   onContinue: () => void;
   onExpand: () => void;
 }) {
@@ -390,7 +462,7 @@ function PrescriptionReview({
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
         <h1 style={{ margin: 0 }}>Review prescription</h1>
         <span className={isAi ? "badge-ai" : "badge-demo"}>
-          {isAi ? "✨ Gemini 3.8 Flash OCR" : "📋 Demo Fallback"}
+          {isAi ? "✨ Gemini 3.8 Flash OCR" : "📋 Demo Prescription"}
         </span>
       </div>
       <p style={{ margin: "0 0 12px" }}>
@@ -406,7 +478,14 @@ function PrescriptionReview({
       )}
 
       <div className="prescription-preview">
-        <Image src="/assets/images/prescription.png" alt="Uploaded prescription" fill sizes="342px" priority />
+        <Image
+          src={uploadedImageUrl || "/assets/images/prescription.png"}
+          alt="Uploaded prescription"
+          fill
+          sizes="342px"
+          priority
+          style={{ objectFit: "cover" }}
+        />
         <button type="button" aria-label="Expand prescription" onClick={onExpand}>
           <Expand size={18} />
         </button>
@@ -417,12 +496,12 @@ function PrescriptionReview({
       <MedicineList
         medicineItems={medicinesList}
         timingConfirmed={timingConfirmed}
-        onEdit={onEdit}
+        onEdit={(med) => onEdit(med)}
       />
       <Bottom>
         <Button
           variant="primary"
-          onClick={timingConfirmed || uncertainCount === 0 ? onContinue : onEdit}
+          onClick={timingConfirmed || uncertainCount === 0 ? onContinue : () => onEdit()}
         >
           {timingConfirmed || uncertainCount === 0 ? "Confirm Prescription" : "Check 1 Unclear Detail"}
         </Button>
@@ -431,81 +510,300 @@ function PrescriptionReview({
   );
 }
 
-function MedicineReview({ onEdit, onContinue }: { onEdit: () => void; onContinue: () => void }) {
-  const tags: Array<[number, number, string, string]> = [
-    [2, 32, "Glycomet 500mg", "20 Tab"],
-    [55, 31, "Telma 40mg", "20 Tab"],
-    [4, 48, "Atorvastatin", "20 Tab"],
-    [67, 60, "Dolo 500mg", "20 Tab"],
-    [2, 70, "Glimepride", "20 Tab"],
-    [35, 64, "Lumia 60k", "8 Cap"],
-    [38, 77, "Pan 40mg", "20 Tab"],
-    [2, 91, "Amlodipine", "20 Tab"],
-    [37, 93, "Pan 40mg", "20 Tab"],
-    [69, 91, "Ecosprin", "20 Tab"],
+function MedicineReview({
+  medicinesList,
+  onEditMedicine,
+  onDeleteMedicine,
+  onAddMedicine,
+  onContinue,
+}: {
+  medicinesList: Medicine[];
+  onEditMedicine: (med: Medicine) => void;
+  onDeleteMedicine: (id: string) => void;
+  onAddMedicine: () => void;
+  onContinue: () => void;
+}) {
+  const tagPositions = [
+    [2, 32],
+    [55, 31],
+    [4, 48],
+    [67, 60],
+    [2, 70],
+    [35, 64],
+    [38, 77],
+    [2, 91],
+    [37, 93],
+    [69, 91],
   ];
+
   return (
     <main className="photo-review">
-      <div className="medicine-photo">
-        <Image src="/assets/images/medicines-flatlay.png" alt="Detected medicine packages laid flat" fill sizes="390px" priority />
-        <button onClick={onEdit} aria-label="Edit matches">
-          <Edit />
+      <div className="medicine-photo" style={{ position: "relative" }}>
+        <Image
+          src="/assets/images/medicines-flatlay.png"
+          alt="Detected medicine packages laid flat"
+          fill
+          sizes="390px"
+          priority
+        />
+        <button
+          onClick={onAddMedicine}
+          aria-label="Add or edit matches"
+          title="Add or edit medicine"
+        >
+          <Plus />
         </button>
-        {tags.map(([x, y, name, qty]) => (
-          <span className="detection-tag" style={{ left: `${x}%`, top: `${y}%` }} key={`${name}-${x}-${y}`}>
-            {name}
-            <b>{qty}</b>
-          </span>
-        ))}
+        {medicinesList.slice(0, tagPositions.length).map((med, idx) => {
+          const [x, y] = tagPositions[idx];
+          return (
+            <span
+              className="detection-tag"
+              style={{ left: `${x}%`, top: `${y}%` }}
+              key={med.id}
+              onClick={() => onEditMedicine(med)}
+              title="Click to edit medicine"
+            >
+              {med.name}
+              <b>{med.quantity ? `${med.quantity} Tab` : "20 Tab"}</b>
+            </span>
+          );
+        })}
       </div>
+
+      <div style={{ padding: "14px 16px 8px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <h2 style={{ fontSize: 13, fontWeight: 700, margin: 0, color: "var(--color-text)" }}>
+            Verified Medications ({medicinesList.length})
+          </h2>
+          <button
+            type="button"
+            onClick={onAddMedicine}
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              padding: "4px 8px",
+              borderRadius: 6,
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              color: "var(--color-text)",
+            }}
+          >
+            <Plus size={12} /> Add
+          </button>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {medicinesList.map((med) => (
+            <div
+              key={med.id}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "8px 10px",
+                background: "var(--color-surface)",
+                borderRadius: 8,
+                border: "1px solid var(--color-border-2)",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <strong style={{ fontSize: 12, color: "var(--color-text)" }}>{med.name}</strong>
+                  <span style={{ fontSize: 9, fontWeight: 700, background: "#f1f5f9", padding: "1px 5px", borderRadius: 4, color: "#475569" }}>
+                    {med.schedule}
+                  </span>
+                </div>
+                <span style={{ fontSize: 11, color: "var(--color-text-2)", display: "block", marginTop: 2 }}>
+                  {med.timing} • {med.quantity ?? 20} tabs ({med.days ?? 10} days)
+                </span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <button
+                  type="button"
+                  onClick={() => onEditMedicine(med)}
+                  style={{
+                    border: 0,
+                    background: "transparent",
+                    padding: 4,
+                    cursor: "pointer",
+                    color: "var(--color-text-2)",
+                  }}
+                  title="Edit medicine"
+                >
+                  <Edit size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDeleteMedicine(med.id)}
+                  style={{
+                    border: 0,
+                    background: "transparent",
+                    padding: 4,
+                    cursor: "pointer",
+                    color: "#ef4444",
+                  }}
+                  title="Delete medicine"
+                >
+                  <Trash size={14} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <Bottom>
-        <Button onClick={onContinue}>Confirm Medicine Match</Button>
+        <Button onClick={onContinue}>Confirm Medicine Match & Continue</Button>
       </Bottom>
     </main>
   );
 }
 
-function EditMedicine({
+function MedicineEditorModal({
+  medicine,
   onClose,
   onSave,
 }: {
+  medicine: Partial<Medicine> | null;
   onClose: () => void;
-  onSave: (qty: number) => void;
+  onSave: (med: Partial<Medicine>) => void;
 }) {
-  const [qty, setQty] = useState(20);
+  const isNew = !medicine?.id;
+  const [name, setName] = useState(medicine?.name || "");
+  const [schedule, setSchedule] = useState(medicine?.schedule || "1-0-1");
+  const [timing, setTiming] = useState(medicine?.timing || "After food");
+  const [quantity, setQuantity] = useState(medicine?.quantity ?? 20);
+  const [days, setDays] = useState(medicine?.days ?? 10);
+  const [instructions, setInstructions] = useState(medicine?.instructions || "");
+
+  const schedules = ["1-0-0", "0-1-0", "0-0-1", "1-0-1", "1-1-1", "Custom"];
+  const timings = [
+    "Before food",
+    "With food",
+    "After food",
+    "At bedtime",
+    "After breakfast & dinner",
+  ];
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    onSave({
+      ...(medicine || {}),
+      name: name.trim(),
+      schedule,
+      timing,
+      quantity: Number(quantity) || 10,
+      days: Number(days) || 10,
+      instructions: instructions.trim() || undefined,
+      uncertain: false,
+    });
+  };
+
   return (
-    <div className="modal-scrim">
-      <section className="sheet sheet--short" role="dialog" aria-modal="true">
+    <div className="modal-scrim" onClick={onClose}>
+      <section
+        className="sheet"
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="sheet-header">
-          <h2>Edit match</h2>
+          <h2>{isNew ? "Add Medicine" : "Edit Medicine Details"}</h2>
           <button type="button" onClick={onClose} aria-label="Close">
             <Image src="/assets/icons/close.svg" alt="" width={24} height={24} />
           </button>
         </div>
-        <label>
-          Match with Prescription
-          <select defaultValue="Vertin 2mg">
-            <option>Vertin 2mg</option>
-            <option>Metformin 500mg</option>
-            <option>Telma 40mg</option>
-          </select>
-        </label>
-        <label>
-          Available Quantity (Tablets/Units)
-          <input
-            type="number"
-            value={qty}
-            min="1"
-            max="100"
-            onChange={(e) => setQty(Number(e.target.value) || 0)}
-          />
-        </label>
-        <div className="sheet-actions">
-          <Button variant="danger" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={() => onSave(qty)}>Save</Button>
-        </div>
+
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <label>
+            Medicine Name & Strength
+            <input
+              type="text"
+              required
+              placeholder="e.g. Vertin 2mg or Telma 40mg"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <label>
+              Schedule
+              <select
+                value={schedule}
+                onChange={(e) => setSchedule(e.target.value)}
+              >
+                {schedules.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Timing
+              <select
+                value={timing}
+                onChange={(e) => setTiming(e.target.value)}
+              >
+                {timings.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <label>
+              Available Qty (Units)
+              <input
+                type="number"
+                min="1"
+                max="300"
+                value={quantity}
+                onChange={(e) => setQuantity(Number(e.target.value) || 0)}
+              />
+            </label>
+
+            <label>
+              Course Duration (Days)
+              <input
+                type="number"
+                min="1"
+                max="90"
+                value={days}
+                onChange={(e) => setDays(Number(e.target.value) || 0)}
+              />
+            </label>
+          </div>
+
+          <label>
+            Caregiver Notes / Instructions
+            <input
+              type="text"
+              placeholder="e.g. Take with warm water"
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+            />
+          </label>
+
+          <div className="sheet-actions" style={{ marginTop: 8 }}>
+            <Button type="button" variant="danger" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit">
+              {isNew ? "Add Medicine" : "Save Changes"}
+            </Button>
+          </div>
+        </form>
       </section>
     </div>
   );
@@ -802,24 +1100,34 @@ function HomeScreen({
         </section>
 
         {/* Refill Alert */}
-        <section className="refill-alert">
-          <b>!</b>
-          <span>
-            <strong>Telma 40 may run out soon</strong>About 4 days remaining
-          </span>
-          <button type="button" onClick={onOpenReview}>
-            Review
-          </button>
-        </section>
+        {(() => {
+          const lowestMed = medicinesList.length > 0
+            ? medicinesList.reduce((min, cur) => ((cur.days ?? 10) < (min.days ?? 10) ? cur : min), medicinesList[0])
+            : null;
+          return (
+            <section className="refill-alert">
+              <b>!</b>
+              <span>
+                <strong>{lowestMed ? `${lowestMed.name} stock notification` : "Prescription medicine inventory"}</strong>
+                {lowestMed
+                  ? `About ${lowestMed.days ?? 4} days remaining (${lowestMed.quantity ?? 10} units available)`
+                  : "All medications have sufficient stock"}
+              </span>
+              <button type="button" onClick={onOpenReview}>
+                Review
+              </button>
+            </section>
+          );
+        })()}
 
         {/* Prepared Pouches */}
         <h2 className="home-section-title">Prepared Pouches</h2>
         <section className="pouches-card">
           <div>
             <span>
-              {patientData.name}&apos;s routine<strong>Prepared through {patientData.preparedThrough}</strong>
+              {patientData.name}&apos;s routine<strong>Prepared through {patientData.preparedThrough || "Sunday"}</strong>
             </span>
-            <b>{patientData.daysLeft} days left</b>
+            <b>{patientData.availableDays || patientData.daysLeft || 10} days left</b>
           </div>
           <Image src="/assets/images/prepared-pouches.png" alt="Four prepared medicine pouches" width={340} height={117} />
           <div className="card-actions">
@@ -890,8 +1198,11 @@ export function QuietcareApp() {
   const [ocrNotice, setOcrNotice] = useState<string>("");
 
   const [prescriptionModal, setPrescriptionModal] = useState(false);
-  const [medicineModal, setMedicineModal] = useState(false);
+  const [selectedUncertainMed, setSelectedUncertainMed] = useState<Medicine | null>(null);
+  const [medicineEditorOpen, setMedicineEditorOpen] = useState(false);
+  const [editingMedicine, setEditingMedicine] = useState<Partial<Medicine> | null>(null);
   const [uploadModal, setUploadModal] = useState(false);
+  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [activeDialog, setActiveDialog] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -1033,9 +1344,10 @@ export function QuietcareApp() {
   const startNewPrescription = () => {
     setProgress({ ...initialProgress, screen: "prescription-upload" });
     setSelectedName(undefined);
+    setUploadedImageUrl(null);
   };
 
-  const upload = async (file?: File) => {
+  const upload = async (file?: File, isDemo: boolean = false) => {
     if (file) setSelectedName(file.name);
     const targetScreen =
       progress.screen === "prescription-upload"
@@ -1044,44 +1356,80 @@ export function QuietcareApp() {
     go(targetScreen);
 
     if (progress.screen === "prescription-upload") {
-      const res = await uploadPrescriptionFile(file);
+      const res = await uploadPrescriptionFile(file, isDemo);
       if (res.success && res.medicines) {
         setMedicinesData(res.medicines);
+        if (res.prescription?.imageUrl) {
+          setUploadedImageUrl(res.prescription.imageUrl);
+        }
         if (res.ocrResult) {
           setOcrResultSource(res.ocrResult.source);
           setOcrNotice(res.ocrResult.notice || "");
           if (res.ocrResult.source === "gemini-3.8-flash") {
             showToast("✨ Prescription analyzed live with Gemini 3.8 Flash");
           } else {
-            showToast("Prescription loaded with verified clinical fallback");
+            showToast("Sample clinical prescription loaded (Demo Mode)");
           }
         }
         await refreshState();
+        go("prescription-review");
       } else {
-        showToast("Using demo prescription data");
+        showToast(res.error || "Prescription processing error");
+        go("prescription-upload");
       }
+    } else {
+      await new Promise((r) => setTimeout(r, 600));
+      showToast("Medicine packages matched successfully");
+      go("medicine-review");
     }
   };
 
-  const handleSaveTiming = async (timing: string) => {
-    setProgress((prev) => ({ ...prev, timingConfirmed: true }));
-    setPrescriptionModal(false);
-    showToast(`Timing confirmed: ${timing}`);
-    setMedicinesData((prev) =>
-      prev.map((m) => (m.id === "vertin" ? { ...m, timing, uncertain: false } : m))
-    );
-    await updateMedicineTiming("vertin", timing, true);
-    await refreshState();
+  const handleOpenEditUncertain = (med?: Medicine) => {
+    setSelectedUncertainMed(med || medicinesData.find((m) => m.uncertain) || medicinesData[0] || null);
+    setPrescriptionModal(true);
   };
 
-  const handleSaveQty = async (qty: number) => {
-    setMedicineModal(false);
-    showToast(`Saved quantity: ${qty} tablets`);
-    setMedicinesData((prev) =>
-      prev.map((m) => (m.id === "vertin" ? { ...m, quantity: qty } : m))
-    );
-    await updateMedicineQuantity("vertin", qty);
-    await refreshState();
+  const handleSavePrescriptionTiming = async (medId: string, timing: string, schedule: string) => {
+    setProgress((prev) => ({ ...prev, timingConfirmed: true }));
+    setPrescriptionModal(false);
+    showToast(`Saved timing for ${medId}: ${timing}`);
+    const res = await updateMedicine({ id: medId, timing, schedule, uncertain: false });
+    if (res.success) {
+      await refreshState();
+    }
+  };
+
+  const handleOpenAddMedicine = () => {
+    setEditingMedicine(null);
+    setMedicineEditorOpen(true);
+  };
+
+  const handleOpenEditMedicine = (med: Medicine) => {
+    setEditingMedicine(med);
+    setMedicineEditorOpen(true);
+  };
+
+  const handleSaveMedicineEditor = async (medData: Partial<Medicine>) => {
+    setMedicineEditorOpen(false);
+    if (medData.id) {
+      showToast(`Updated medicine: ${medData.name}`);
+      const res = await updateMedicine({ ...medData, id: medData.id });
+      if (res.success) await refreshState();
+    } else {
+      showToast(`Added new medicine: ${medData.name}`);
+      const res = await createMedicine(medData);
+      if (res.success) await refreshState();
+    }
+  };
+
+  const handleDeleteMedicine = async (id: string) => {
+    const res = await deleteMedicine(id);
+    if (res.success) {
+      showToast("Medicine removed");
+      await refreshState();
+    } else {
+      showToast("Failed to remove medicine");
+    }
   };
 
   const handleCreateRoutine = async () => {
@@ -1089,11 +1437,16 @@ export function QuietcareApp() {
     const res = await saveRoutineSettings(
       progress.language,
       progress.breakfast,
-      progress.dinner
+      progress.dinner,
+      patientData.name
     );
     if (res.success && res.coverageDays) {
       showToast(`Routine saved: ${res.coverageDays} days coverage`);
       await refreshState();
+      go("routine-ready");
+    } else {
+      showToast("Error creating routine");
+      go("personalise");
     }
   };
 
@@ -1240,19 +1593,37 @@ export function QuietcareApp() {
         />
 
         {activeDialog === "refill" && (
-          <DetailModal title="Refill Alert" onClose={() => setActiveDialog(null)}>
+          <DetailModal title="Refill & Stock Status" onClose={() => setActiveDialog(null)}>
             <p style={{ margin: "8px 0 12px", color: "var(--color-text-2)", fontSize: 13, lineHeight: "19px" }}>
-              <strong>Telma 40mg</strong> currently has approximately 4 days of stock remaining.
+              Active inventory monitoring for {patientData.name}&apos;s prescribed medications:
             </p>
-            <div style={{ background: "var(--color-surface)", padding: 12, borderRadius: 10, border: "1px solid var(--color-border-2)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 12 }}>
-                <span>Daily Dosage:</span>
-                <strong>1 tablet before dinner</strong>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
-                <span>Suggested Reorder:</span>
-                <strong>Strip of 15 tablets</strong>
-              </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {medicinesData.map((m) => {
+                const days = m.days ?? 10;
+                const isLow = days <= 7;
+                return (
+                  <div
+                    key={m.id}
+                    style={{
+                      background: "var(--color-surface)",
+                      padding: 12,
+                      borderRadius: 10,
+                      border: `1px solid ${isLow ? "#f59e0b" : "var(--color-border-2)"}`,
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 13 }}>
+                      <strong>{m.name}</strong>
+                      <span style={{ fontWeight: 700, color: isLow ? "#b45309" : "#16a34a" }}>
+                        {days} day{days === 1 ? "" : "s"} left
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--color-text-2)" }}>
+                      <span>Available: {m.quantity} tab{m.quantity === 1 ? "" : "s"}</span>
+                      <span>Schedule: {m.timing}</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </DetailModal>
         )}
@@ -1265,7 +1636,15 @@ export function QuietcareApp() {
                   Morning ({progress.breakfast})
                 </strong>
                 <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--color-text-2)" }}>
-                  Pantop 40mg (1 tab, before food) • Metformin 500mg & Vertin 2mg (after breakfast)
+                  {medicinesData
+                    .filter(
+                      (m) =>
+                        m.schedule.startsWith("1") ||
+                        m.timing.toLowerCase().includes("breakfast") ||
+                        m.timing.toLowerCase().includes("morning")
+                    )
+                    .map((m) => `${m.name} (${m.timing})`)
+                    .join(" • ") || "No morning doses scheduled"}
                 </p>
               </div>
               <div style={{ padding: 12, borderRadius: 10, background: "var(--color-surface)", border: "1px solid var(--color-border-2)" }}>
@@ -1273,7 +1652,16 @@ export function QuietcareApp() {
                   Dinner & Night ({progress.dinner})
                 </strong>
                 <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--color-text-2)" }}>
-                  Telma 40mg (1 tab, before dinner) • Vertin 2mg (1 tab, bedtime)
+                  {medicinesData
+                    .filter(
+                      (m) =>
+                        m.schedule.endsWith("1") ||
+                        m.timing.toLowerCase().includes("dinner") ||
+                        m.timing.toLowerCase().includes("night") ||
+                        m.timing.toLowerCase().includes("bedtime")
+                    )
+                    .map((m) => `${m.name} (${m.timing})`)
+                    .join(" • ") || "No evening doses scheduled"}
                 </p>
               </div>
             </div>
@@ -1283,7 +1671,7 @@ export function QuietcareApp() {
         {activeDialog === "prepare" && (
           <DetailModal title="Prepare Pouches" onClose={() => setActiveDialog(null)}>
             <p style={{ fontSize: 12, color: "var(--color-text-2)", lineHeight: "18px" }}>
-              Organize individual medicine pouches with printed labels for each scheduled dose through {patientData.preparedThrough}.
+              Organize individual medicine pouches with printed labels for each scheduled dose through {patientData.preparedThrough || "Sunday"}.
             </p>
             <div style={{ marginTop: 12 }}>
               <Button
@@ -1336,9 +1724,33 @@ export function QuietcareApp() {
 
         {activeDialog === "stock" && (
           <DetailModal title="Medicines Inventory" onClose={() => setActiveDialog(null)}>
-            <p style={{ fontSize: 11, color: "var(--color-text-3)", margin: "4px 0 12px" }}>
-              Live inventory synced with backend data layer:
-            </p>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "4px 0 10px" }}>
+              <span style={{ fontSize: 11, color: "var(--color-text-3)" }}>
+                Live inventory synced with backend data:
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveDialog(null);
+                  handleOpenAddMedicine();
+                }}
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: "4px 8px",
+                  borderRadius: 6,
+                  background: "var(--color-surface)",
+                  border: "1px solid var(--color-border)",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  color: "var(--color-text)",
+                }}
+              >
+                <Plus size={12} /> Add Medicine
+              </button>
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
               {medicinesData.map((m) => (
                 <div key={m.id} className="stock-row">
@@ -1348,39 +1760,63 @@ export function QuietcareApp() {
                       {m.schedule} • {m.timing}
                     </span>
                   </div>
-                  <div className="stock-counter">
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div className="stock-counter">
+                      <button
+                        type="button"
+                        className="stock-btn"
+                        onClick={async () => {
+                          const newQty = Math.max(0, m.quantity - 1);
+                          setMedicinesData((prev) =>
+                            prev.map((item) => (item.id === m.id ? { ...item, quantity: newQty } : item))
+                          );
+                          await updateMedicineQuantity(m.id, newQty);
+                          await refreshState();
+                        }}
+                        title="Decrease quantity"
+                      >
+                        -
+                      </button>
+                      <strong style={{ minWidth: 36, textAlign: "center", fontSize: 11 }}>
+                        {m.quantity}
+                      </strong>
+                      <button
+                        type="button"
+                        className="stock-btn"
+                        onClick={async () => {
+                          const newQty = m.quantity + 1;
+                          setMedicinesData((prev) =>
+                            prev.map((item) => (item.id === m.id ? { ...item, quantity: newQty } : item))
+                          );
+                          await updateMedicineQuantity(m.id, newQty);
+                          await refreshState();
+                        }}
+                        title="Increase quantity"
+                      >
+                        +
+                      </button>
+                    </div>
+
                     <button
                       type="button"
-                      className="stock-btn"
-                      onClick={async () => {
-                        const newQty = Math.max(0, m.quantity - 1);
-                        setMedicinesData((prev) =>
-                          prev.map((item) => (item.id === m.id ? { ...item, quantity: newQty } : item))
-                        );
-                        await updateMedicineQuantity(m.id, newQty);
-                        await refreshState();
+                      onClick={() => {
+                        setActiveDialog(null);
+                        handleOpenEditMedicine(m);
                       }}
-                      title="Decrease quantity"
+                      style={{ border: 0, background: "transparent", cursor: "pointer", padding: 4 }}
+                      title="Edit medicine"
                     >
-                      -
+                      <Edit size={14} />
                     </button>
-                    <strong style={{ minWidth: 46, textAlign: "center" }}>
-                      {m.quantity} tab{m.quantity === 1 ? "" : "s"}
-                    </strong>
                     <button
                       type="button"
-                      className="stock-btn"
                       onClick={async () => {
-                        const newQty = m.quantity + 1;
-                        setMedicinesData((prev) =>
-                          prev.map((item) => (item.id === m.id ? { ...item, quantity: newQty } : item))
-                        );
-                        await updateMedicineQuantity(m.id, newQty);
-                        await refreshState();
+                        await handleDeleteMedicine(m.id);
                       }}
-                      title="Increase quantity"
+                      style={{ border: 0, background: "transparent", cursor: "pointer", padding: 4, color: "#ef4444" }}
+                      title="Delete medicine"
                     >
-                      +
+                      <Trash size={14} />
                     </button>
                   </div>
                 </div>
@@ -1523,6 +1959,7 @@ export function QuietcareApp() {
             selectedName={selectedName}
             onChoose={() => setUploadModal(true)}
             onTake={() => upload()}
+            onDemo={() => upload(undefined, true)}
           />
         </main>
       );
@@ -1546,8 +1983,9 @@ export function QuietcareApp() {
           courseDays={patientData.courseDays}
           ocrSource={ocrResultSource}
           ocrNotice={ocrNotice}
-          onEdit={() => setPrescriptionModal(true)}
-          onExpand={() => setLightboxSrc("/assets/images/prescription.png")}
+          uploadedImageUrl={uploadedImageUrl || undefined}
+          onEdit={(med) => handleOpenEditUncertain(med)}
+          onExpand={() => setLightboxSrc(uploadedImageUrl || "/assets/images/prescription.png")}
           onContinue={() => go("medicine-upload")}
         />
       );
@@ -1591,7 +2029,10 @@ export function QuietcareApp() {
     case "medicine-review":
       content = (
         <MedicineReview
-          onEdit={() => setMedicineModal(true)}
+          medicinesList={medicinesData}
+          onEditMedicine={handleOpenEditMedicine}
+          onDeleteMedicine={handleDeleteMedicine}
+          onAddMedicine={handleOpenAddMedicine}
           onContinue={() => go("personalise")}
         />
       );
@@ -1607,6 +2048,15 @@ export function QuietcareApp() {
           </h1>
           <p>We&apos;ll use these details for their medicine reminders.</p>
           <div className="form-stack">
+            <label>
+              Parent&apos;s Name
+              <input
+                type="text"
+                value={patientData.name}
+                placeholder="e.g. Meena Patil"
+                onChange={(e) => setPatientData((prev) => ({ ...prev, name: e.target.value }))}
+              />
+            </label>
             <label>
               Preferred language
               <select
@@ -1746,31 +2196,67 @@ export function QuietcareApp() {
       );
       break;
 
-    case "pack":
+    case "pack": {
+      const dosePacks = generateDosePacks(
+        medicinesData,
+        progress.breakfast,
+        progress.dinner
+      );
       content = (
         <main className="screen-content pack-screen">
           <h1>Pack medicines</h1>
-          <p>Find the highlighted medicine in your photo, then add the shown amount.</p>
+          <p>
+            Prepare sealed pouches for {patientData.name}&apos;s routine ({patientData.availableDays || 10} days coverage).
+          </p>
           <div className="pack-photo">
             <Image src="/assets/images/medicines-highlighted.png" alt="Highlighted medicine packages" fill sizes="390px" />
           </div>
-          <div className="packet-summary">
-            <Image src="/assets/pouch-labels/before-breakfast.png" alt="Before breakfast pouch label" width={70} height={86} />
-            <p>
-              Packet 1<strong>Before breakfast</strong>
-            </p>
-          </div>
-          <div className="packing-row">
-            <b>1</b>
-            <span>
-              Glycomet 500mg<strong>Cut 7 sealed tablets</strong>
-            </span>
-          </div>
-          <div className="packing-row">
-            <b>2</b>
-            <span>
-              Cholecalciferol<strong>Cut 7 sealed tablets</strong>
-            </span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {dosePacks.map((pack) => {
+              const isBreakfast = pack.timingLabel.toLowerCase().includes("breakfast");
+              const isDinner = pack.timingLabel.toLowerCase().includes("dinner");
+              const labelIcon = isBreakfast
+                ? pack.timingLabel.toLowerCase().includes("before")
+                  ? "/assets/pouch-labels/before-breakfast.png"
+                  : "/assets/pouch-labels/after-breakfast.png"
+                : isDinner
+                ? pack.timingLabel.toLowerCase().includes("before")
+                  ? "/assets/pouch-labels/before-dinner.png"
+                  : "/assets/pouch-labels/after-dinner.png"
+                : "/assets/pouch-labels/bedtime.png";
+
+              return (
+                <div
+                  key={pack.packetNumber}
+                  style={{
+                    background: "var(--color-surface)",
+                    padding: 12,
+                    borderRadius: 12,
+                    border: "1px solid var(--color-border-2)",
+                  }}
+                >
+                  <div className="packet-summary" style={{ margin: "0 0 10px" }}>
+                    <Image src={labelIcon} alt={`${pack.timingLabel} label`} width={56} height={68} />
+                    <p>
+                      Packet {pack.packetNumber}
+                      <strong>{pack.timingLabel}</strong>
+                      <span style={{ fontSize: 11, color: "var(--color-text-3)", fontWeight: 500 }}>
+                        {pack.mealRelation}
+                      </span>
+                    </p>
+                  </div>
+                  {pack.medicines.map((item, idx) => (
+                    <div className="packing-row" key={`${item.name}-${idx}`} style={{ margin: "4px 0" }}>
+                      <b>{idx + 1}</b>
+                      <span>
+                        {item.name} ({item.dose})
+                        <strong>Cut {patientData.availableDays || 10} sealed tablets ({item.instruction})</strong>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
           </div>
           <Bottom>
             <Button onClick={() => go("connect")}>Next step: Connect Telegram</Button>
@@ -1778,6 +2264,7 @@ export function QuietcareApp() {
         </main>
       );
       break;
+    }
 
     case "connect":
       content = (
@@ -1964,17 +2451,20 @@ export function QuietcareApp() {
         </div>
       )}
 
-      {prescriptionModal && (
-        <EditPrescription
+      {prescriptionModal && selectedUncertainMed && (
+        <EditPrescriptionModal
+          medicine={selectedUncertainMed}
+          medicinesList={medicinesData}
           onClose={() => setPrescriptionModal(false)}
-          onSave={handleSaveTiming}
+          onSave={handleSavePrescriptionTiming}
         />
       )}
 
-      {medicineModal && (
-        <EditMedicine
-          onClose={() => setMedicineModal(false)}
-          onSave={handleSaveQty}
+      {medicineEditorOpen && (
+        <MedicineEditorModal
+          medicine={editingMedicine}
+          onClose={() => setMedicineEditorOpen(false)}
+          onSave={handleSaveMedicineEditor}
         />
       )}
 

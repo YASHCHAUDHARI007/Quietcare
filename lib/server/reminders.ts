@@ -1,81 +1,28 @@
 import { QuietcareRepository } from "./repository";
 import { TelegramService } from "./telegram";
+import { generateDosesForRoutine } from "@/lib/routine";
 import type { Dose } from "@/types/quietcare";
 
 export class ReminderService {
   /**
    * Generates a set of scheduled dose records for today based on active medicines and routine settings.
    */
-  static async syncTodayDosesFromRoutine(): Promise<Dose[]> {
+  static async syncTodayDosesFromRoutine(forceRegenerate: boolean = false): Promise<Dose[]> {
     const state = await QuietcareRepository.getState();
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const day = String(now.getDate()).padStart(2, "0");
-    const datePrefix = `${year}-${month}-${day}`;
 
-    // If doses already exist for today, keep them
-    if (state.doses && state.doses.length > 0) {
-      return state.doses;
-    }
-
-    const generatedDoses: Dose[] = [
-      {
-        id: `dose_${Date.now()}_bb`,
-        medicineId: "pantop",
-        medicineName: "Pantop 40mg",
-        doseAmount: "1 tablet",
-        patientId: state.patient.id,
-        scheduledAt: `${datePrefix}T08:00:00Z`,
-        scheduledTimeLabel: state.routine.breakfastTime || "8:00 AM",
-        timing: "Before Breakfast",
-        status: "pending",
-        notes: "Take 30 mins before food",
-      },
-      {
-        id: `dose_${Date.now()}_ab`,
-        medicineId: "metformin",
-        medicineName: "Metformin 500mg",
-        doseAmount: "1 tablet",
-        patientId: state.patient.id,
-        scheduledAt: `${datePrefix}T08:30:00Z`,
-        scheduledTimeLabel: "8:30 AM",
-        timing: "After Breakfast",
-        status: "pending",
-        notes: "Take after breakfast with water",
-      },
-      {
-        id: `dose_${Date.now()}_bd`,
-        medicineId: "telma",
-        medicineName: "Telma 40mg",
-        doseAmount: "1 tablet",
-        patientId: state.patient.id,
-        scheduledAt: `${datePrefix}T19:30:00Z`,
-        scheduledTimeLabel: state.routine.dinnerTime || "7:30 PM",
-        timing: "Before Dinner",
-        status: "pending",
-        notes: "Blood pressure support dose",
-      },
-      {
-        id: `dose_${Date.now()}_ad`,
-        medicineId: "vertin",
-        medicineName: "Vertin 2mg",
-        doseAmount: "1 tablet",
-        patientId: state.patient.id,
-        scheduledAt: `${datePrefix}T21:00:00Z`,
-        scheduledTimeLabel: "9:00 PM",
-        timing: "After Dinner",
-        status: "pending",
-        notes: "Night dose before sleep",
-      },
-    ];
+    const syncedDoses = generateDosesForRoutine(
+      state.medicines || [],
+      state.routine,
+      state.patient?.id || "patient_meena",
+      forceRegenerate ? [] : (state.doses || [])
+    );
 
     await QuietcareRepository.updateState((prev) => ({
       ...prev,
-      doses: generatedDoses,
+      doses: syncedDoses,
     }));
 
-    return generatedDoses;
+    return syncedDoses;
   }
 
   /**
