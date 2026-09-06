@@ -1,4 +1,5 @@
 import type { Dose, Medicine, RoutineSchedule } from "@/types/quietcare";
+import { createISTIsoString, getISTDateParts } from "@/lib/timezone";
 
 /**
  * Calculates daily pill requirement from dosage convention (e.g., "1-0-1" = 2/day, "1-1-1" = 3/day).
@@ -215,11 +216,7 @@ export function generateDosesForRoutine(
   patientId: string = "patient_meena",
   existingDoses: Dose[] = []
 ): Dose[] {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  const datePrefix = `${year}-${month}-${day}`;
+  const { datePrefix } = getISTDateParts();
 
   const bTime = routine.breakfastTime || "8:00 am";
   const dTime = routine.dinnerTime || "7:30 pm";
@@ -229,7 +226,7 @@ export function generateDosesForRoutine(
   for (const slot of STANDARD_SLOTS) {
     const slotTime = slot.calcTime(bTime, dTime);
     const timeLabel = formatTimeLabel(slotTime.hour, slotTime.minute);
-    const scheduledAt = `${datePrefix}T${String(slotTime.hour).padStart(2, "0")}:${String(slotTime.minute).padStart(2, "0")}:00`;
+    const scheduledAt = createISTIsoString(datePrefix, slotTime.hour, slotTime.minute);
 
     const matchingMeds = medicines.filter(slot.matchesMedicine);
 
@@ -268,7 +265,7 @@ export function generateDosesForRoutine(
       medicineName: med.name,
       doseAmount: "1 tablet",
       patientId,
-      scheduledAt: `${datePrefix}T08:30:00`,
+      scheduledAt: createISTIsoString(datePrefix, 8, 30),
       scheduledTimeLabel: "8:30 AM",
       timing: "Morning",
       status: existingDoses[idx]?.status || "pending",

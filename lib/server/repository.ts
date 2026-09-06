@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import crypto from "crypto";
+import { createISTIsoString, getISTDateParts, getISTNowIso } from "@/lib/timezone";
 import type {
   ActivityLog,
   ConnectionToken,
@@ -132,11 +133,7 @@ const defaultRoutine: RoutineSchedule = {
 };
 
 function generateInitialTodayDoses(): Dose[] {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  const datePrefix = `${year}-${month}-${day}`;
+  const { datePrefix } = getISTDateParts();
 
   return [
     {
@@ -145,11 +142,11 @@ function generateInitialTodayDoses(): Dose[] {
       medicineName: "Pantop 40mg",
       doseAmount: "1 tablet",
       patientId: "patient_meena",
-      scheduledAt: `${datePrefix}T08:00:00Z`,
+      scheduledAt: createISTIsoString(datePrefix, 8, 0),
       scheduledTimeLabel: "8:00 AM",
       timing: "Before Breakfast",
       status: "taken",
-      takenAt: `${datePrefix}T08:05:00Z`,
+      takenAt: createISTIsoString(datePrefix, 8, 5),
       notes: "Taken 30 mins before meal",
     },
     {
@@ -158,11 +155,11 @@ function generateInitialTodayDoses(): Dose[] {
       medicineName: "Metformin 500mg",
       doseAmount: "1 tablet",
       patientId: "patient_meena",
-      scheduledAt: `${datePrefix}T08:30:00Z`,
+      scheduledAt: createISTIsoString(datePrefix, 8, 30),
       scheduledTimeLabel: "8:30 AM",
       timing: "After Breakfast",
       status: "taken",
-      takenAt: `${datePrefix}T08:35:00Z`,
+      takenAt: createISTIsoString(datePrefix, 8, 35),
       notes: "Taken with breakfast",
     },
     {
@@ -171,7 +168,7 @@ function generateInitialTodayDoses(): Dose[] {
       medicineName: "Telma 40mg",
       doseAmount: "1 tablet",
       patientId: "patient_meena",
-      scheduledAt: `${datePrefix}T19:30:00Z`,
+      scheduledAt: createISTIsoString(datePrefix, 19, 30),
       scheduledTimeLabel: "7:30 PM",
       timing: "Before Dinner",
       status: "pending",
@@ -183,7 +180,7 @@ function generateInitialTodayDoses(): Dose[] {
       medicineName: "Vertin 2mg",
       doseAmount: "1 tablet",
       patientId: "patient_meena",
-      scheduledAt: `${datePrefix}T21:00:00Z`,
+      scheduledAt: createISTIsoString(datePrefix, 21, 0),
       scheduledTimeLabel: "9:00 PM",
       timing: "After Dinner",
       status: "pending",
