@@ -1,16 +1,25 @@
 import { NextResponse } from "next/server";
-import { getStore, updateStore } from "@/lib/server/store";
+import { QuietcareRepository } from "@/lib/server/repository";
+import { TelegramService } from "@/lib/server/telegram";
+import { ReminderService } from "@/lib/server/reminders";
 
 export async function GET() {
   try {
-    const store = await getStore();
+    const state = await QuietcareRepository.getState();
+    const botInfo = await TelegramService.getBotInfo();
+
     return NextResponse.json({
       success: true,
-      telegram: store.telegram,
-      patientName: store.patient.name,
+      telegram: {
+        ...state.telegram,
+        isConfigured: botInfo.isConfigured,
+        botUsername: botInfo.username,
+        botHandle: `@${botInfo.username}`,
+      },
+      patientName: state.patient.name,
     });
   } catch (error) {
-    console.error("Error fetching telegram state:", error);
+    console.error("[API telegram GET] Error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to fetch telegram state" },
       { status: 500 }
@@ -21,57 +30,60 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { action } = body;
+    const { action, patientId = "patient_meena", doseId } = body;
 
-    const token = `qc_${Math.random().toString(36).substring(2, 8)}`;
-    const deepLink = `https://t.me/QuietcareReminderBot?start=${token}`;
+    if (action === "create" || action === "create_link") {
+      const linkInfo = await TelegramService.createConnectLink(patientId);
 
-    const updatedState = await updateStore((prev) => {
-      const isConnected = action === "confirm" || action === "connected" ? true : prev.telegram.connected;
+      return NextResponse.json({
+        success: true,
+        token: linkInfo.token,
+        deepLink: linkInfo.deepLink,
+        botUsername: linkInfo.botUsername,
+        message: "Unique Telegram connection link generated",
+      });
+    }
 
-      return {
-        ...prev,
-        telegram: {
-          ...prev.telegram,
-          connected: isConnected,
-          deepLink,
-          parentName: prev.patient.name,
-          lastReminderSent: action === "send_test_reminder"
-            ? new Date().toISOString()
-            : prev.telegram.lastReminderSent,
-        },
-        activityLogs: [
-          {
-            id: `act_${Date.now()}`,
-            timestamp: new Date().toISOString(),
-            type: "telegram_connected",
-            title: action === "send_test_reminder"
-              ? "Test Telegram Reminder Sent"
-              : isConnected
-              ? `Connected ${prev.patient.name} on Telegram`
-              : "Generated Telegram Connect Link",
-            description: action === "send_test_reminder"
-              ? `Sent dose reminder for ${prev.patient.name} via ${prev.telegram.botHandle}`
-              : `Token: ${token}`,
-          },
-          ...prev.activityLogs,
-        ],
-      };
-    });
+    if (action === "disconnect") {
+      const updated = await QuietcareRepository.disconnectTelegram();
+      return NextResponse.json({
+        success: true,
+        telegram: updated,
+        message: "Telegram disconnected",
+      });
+    }
 
-    return NextResponse.json({
-      success: true,
-      telegram: updatedState.telegram,
-      deepLink,
-      message:
-        action === "send_test_reminder"
-          ? "Simulated reminder delivered to Telegram successfully"
-          : "Telegram invite link created",
-    });
-  } catch (error) {
-    console.error("Error updating telegram:", error);
+    if (action === "test_connect_dev") {
+      // Allows verifying the connection transition in dev/demo environments
+      // without needing an external webhook ping
+      const state = await QuietcareRepository.getState();
+      const demoChatId = 987654321;
+      const updated = await QuietcareRepository.connectTelegram(
+        state.patient.id,
+        demoChatId,
+        "meena_telegram_user"
+      );
+
+      return NextResponse.json({
+        success: true,
+        telegram: updated,
+        message: `Verified Telegram connection established for ${state.patient.name}`,
+      });
+    }
+
+    if (action === "send_test_reminder") {
+      const reminderResult = await ReminderService.triggerTestReminder(doseId);
+      return NextResponse.json(reminderResult);
+    }
+
     return NextResponse.json(
-      { success: false, error: "Failed to update telegram connection" },
+      { success: false, error: `Unrecognized action: ${action}` },
+      { status: 400 }
+    );
+  } catch (error) {
+    console.error("[API telegram POST] Error:", error);
+    return NextResponse.json(
+      { success: false, error: "Failed to process Telegram request" },
       { status: 500 }
     );
   }

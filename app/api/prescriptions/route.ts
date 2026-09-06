@@ -1,18 +1,18 @@
 import { NextResponse } from "next/server";
 import { analyzePrescriptionWithGemini } from "@/lib/server/gemini";
-import { getStore, updateStore } from "@/lib/server/store";
+import { QuietcareRepository } from "@/lib/server/repository";
 import type { PrescriptionRecord } from "@/types/quietcare";
 
 export async function GET() {
   try {
-    const store = await getStore();
+    const state = await QuietcareRepository.getState();
     return NextResponse.json({
       success: true,
-      data: store.prescriptions,
-      count: store.prescriptions.length,
+      data: state.prescriptions,
+      count: state.prescriptions.length,
     });
   } catch (error) {
-    console.error("Error fetching prescriptions:", error);
+    console.error("[API prescriptions GET] Error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to fetch prescriptions" },
       { status: 500 }
@@ -25,6 +25,7 @@ export async function POST(req: Request) {
     let fileName = "prescription_upload.png";
     let base64Data: string | undefined;
     let mimeType = "image/jpeg";
+    let fileSizeBytes = 0;
 
     const contentType = req.headers.get("content-type") || "";
 
@@ -34,6 +35,7 @@ export async function POST(req: Request) {
       if (file) {
         fileName = file.name;
         mimeType = file.type || "image/jpeg";
+        fileSizeBytes = file.size;
         const buffer = await file.arrayBuffer();
         base64Data = Buffer.from(buffer).toString("base64");
       }
@@ -42,26 +44,34 @@ export async function POST(req: Request) {
       if (json.fileName) fileName = json.fileName;
       if (json.base64Data) base64Data = json.base64Data;
       if (json.mimeType) mimeType = json.mimeType;
+      if (json.fileSizeBytes) fileSizeBytes = Number(json.fileSizeBytes) || 0;
     }
 
-    const ocrResult = await analyzePrescriptionWithGemini(base64Data, mimeType);
+    const ocrResult = await analyzePrescriptionWithGemini(base64Data, mimeType, fileSizeBytes);
+
+    const hasUncertain = ocrResult.medicines.some((m) => m.uncertain);
 
     const newPrescription: PrescriptionRecord = {
       id: `rx_${Date.now()}`,
       fileName,
       doctorName: ocrResult.doctorName,
-      clinic: "Geriatric & Family Health Clinic",
+      clinic: ocrResult.clinic || "Cardiology & Geriatric Care Clinic",
       uploadedAt: new Date().toISOString(),
       courseDays: ocrResult.courseDays,
       medicinesFound: ocrResult.medicines.length,
-      status: ocrResult.medicines.some((m) => m.uncertain)
-        ? "review-needed"
-        : "verified",
+      status: hasUncertain ? "review-needed" : "verified",
       imageUrl: "/assets/images/prescription.png",
-      ocrConfidence: ocrResult.source === "gemini-3.8-flash" ? 0.98 : 0.92,
+      ocrConfidence: ocrResult.confidence,
+      ocrSource: ocrResult.source,
+      uncertainNotice: ocrResult.uncertainItemNotice,
     };
 
-    const updatedState = await updateStore((prev) => {
+    const updatedState = await QuietcareRepository.updateState((prev) => {
+      const logSourceNotice =
+        ocrResult.source === "gemini-3.8-flash"
+          ? "via Gemini 3.8 Flash multimodal AI"
+          : "using clinical demo fallback (API key not configured)";
+
       return {
         ...prev,
         patient: {
@@ -75,9 +85,9 @@ export async function POST(req: Request) {
           {
             id: `act_${Date.now()}`,
             timestamp: new Date().toISOString(),
-            type: "prescription_added",
-            title: `Prescription uploaded (${fileName})`,
-            description: `Identified ${ocrResult.medicines.length} medicines via ${ocrResult.source}`,
+            type: "prescription_analyzed",
+            title: `Prescription processed (${fileName})`,
+            description: `Identified ${ocrResult.medicines.length} medicines ${logSourceNotice}`,
           },
           ...prev.activityLogs,
         ],
@@ -90,11 +100,12 @@ export async function POST(req: Request) {
       ocrResult,
       currentState: updatedState,
     });
-  } catch (error) {
-    console.error("Error analyzing prescription:", error);
+  } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : "Failed to process prescription";
+    console.error("[API prescriptions POST] Error:", error);
     return NextResponse.json(
-      { success: false, error: "Failed to process prescription" },
-      { status: 500 }
+      { success: false, error: errorMsg },
+      { status: 400 }
     );
   }
 }

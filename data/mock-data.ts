@@ -1,6 +1,7 @@
-import type { Medicine } from "@/types/quietcare";
+import type { Medicine, PatientProfile } from "@/types/quietcare";
 
-export const patient = {
+export const patient: PatientProfile = {
+  id: "meena",
   name: "Meena",
   prescriptionName: "Shobha Patil",
   courseDays: 10,
