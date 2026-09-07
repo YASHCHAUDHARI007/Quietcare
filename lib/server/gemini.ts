@@ -21,7 +21,7 @@ export type ParsedPrescriptionResult = {
   courseDays: number;
   medicines: Medicine[];
   uncertainItemNotice?: string;
-  source: "gemini-3.8-flash" | "demo_fallback";
+  source: "gemini-3.8-flash";
   confidence: number;
   notice?: string;
 };
@@ -37,22 +37,10 @@ const ALLOWED_MIME_TYPES = new Set([
 export async function analyzePrescriptionWithGemini(
   base64Data?: string,
   mimeType: string = "image/jpeg",
-  fileSizeBytes?: number,
-  isDemo: boolean = false
+  fileSizeBytes?: number
 ): Promise<ParsedPrescriptionResult> {
-  // If explicitly requested as demo prescription or no image provided
-  if (isDemo || !base64Data) {
-    return {
-      patientName: "Shobha Patil",
-      doctorName: "Dr. S. Kulkarni",
-      clinic: "Cardiology & Geriatric Care Clinic",
-      courseDays: 10,
-      medicines: getDemoMedicines(),
-      uncertainItemNotice: "Timing unclear for Vertin 2mg (1-0-1). Please confirm before routine generation.",
-      source: "demo_fallback",
-      confidence: 0.92,
-      notice: "Sample clinical prescription loaded (Demo Mode).",
-    };
+  if (!base64Data) {
+    throw new Error("No prescription image was provided. Please select or capture a photo of the prescription.");
   }
 
   // 1. Validation: File size check (Max 10MB)
@@ -69,7 +57,7 @@ export async function analyzePrescriptionWithGemini(
   const ai = getGeminiClient();
   if (!ai) {
     throw new Error(
-      "GEMINI_API_KEY is not configured on the server. Please set GEMINI_API_KEY to analyze custom uploads, or click 'Try Demo Prescription' to test the full flow."
+      "GEMINI_API_KEY is not configured on the server. Please set GEMINI_API_KEY in the environment to enable prescription analysis."
     );
   }
 
@@ -182,53 +170,4 @@ IMPORTANT: Output ONLY a valid JSON object matching this exact structure without
       `Prescription OCR failed: ${err instanceof Error ? err.message : "Unable to extract prescription details"}`
     );
   }
-}
-
-function getDemoMedicines(): Medicine[] {
-  return [
-    {
-      id: "vertin",
-      name: "Vertin 2mg",
-      strength: "2mg",
-      schedule: "1-0-1",
-      timing: "After food",
-      days: 3,
-      quantity: 20,
-      instructions: "Do not crush",
-      uncertain: true, // Clearly marked uncertain!
-    },
-    {
-      id: "metformin",
-      name: "Metformin 500mg",
-      strength: "500mg",
-      schedule: "1-0-1",
-      timing: "After food",
-      days: 10,
-      quantity: 20,
-      instructions: "Take after breakfast and dinner",
-      uncertain: false,
-    },
-    {
-      id: "telma",
-      name: "Telma 40mg",
-      strength: "40mg",
-      schedule: "1-0-1",
-      timing: "Before Dinner",
-      days: 10,
-      quantity: 20,
-      instructions: "Blood pressure support",
-      uncertain: false,
-    },
-    {
-      id: "pantop",
-      name: "Pantop 40mg",
-      strength: "40mg",
-      schedule: "1-0-0",
-      timing: "Before breakfast",
-      days: 10,
-      quantity: 20,
-      instructions: "Take 30 mins before breakfast with water",
-      uncertain: false,
-    },
-  ];
 }

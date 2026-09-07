@@ -57,7 +57,7 @@ export type PrescriptionRecord = {
   status: "verified" | "review-needed" | "pending";
   imageUrl?: string;
   ocrConfidence?: number;
-  ocrSource?: "gemini-3.8-flash" | "demo_fallback";
+  ocrSource?: string;
   uncertainNotice?: string;
 };
 
@@ -105,7 +105,7 @@ export type DoseLog = {
   doseId: string;
   status: DoseStatus;
   timestamp: string;
-  source: "telegram" | "caregiver_ui" | "system";
+  source: "telegram" | "caregiver_ui" | "patient_ui" | "system";
   telegramChatId?: number | string;
 };
 
@@ -130,6 +130,20 @@ export type ConnectionToken = {
   used: boolean;
 };
 
+export type UserRole = "caregiver" | "patient";
+
+export type HelpRequestStatus = "active" | "acknowledged" | "resolved";
+
+export type HelpRequest = {
+  id: string;
+  patientId: string;
+  patientName?: string;
+  createdAt: string;
+  resolvedAt?: string;
+  status: HelpRequestStatus;
+  message?: string;
+};
+
 export type ActivityLog = {
   id: string;
   timestamp: string;
@@ -144,7 +158,9 @@ export type ActivityLog = {
     | "stock_alert"
     | "routine_created"
     | "medicine_edited"
-    | "telegram_connected";
+    | "telegram_connected"
+    | "help_requested"
+    | "help_resolved";
   title: string;
   description: string;
 };
@@ -160,6 +176,7 @@ export type QuietcareAppState = {
   telegram: TelegramConnection;
   activityLogs: ActivityLog[];
   pendingTokens: ConnectionToken[];
+  helpRequests?: HelpRequest[];
 };
 
 export type QuietcareProgress = {

@@ -2,6 +2,8 @@ import type {
   ActivityLog,
   Dose,
   DoseStatus,
+  HelpRequest,
+  HelpRequestStatus,
   Medicine,
   PrescriptionRecord,
   QuietcareAppState,
@@ -48,7 +50,7 @@ export async function fetchTodayDoses(): Promise<TodayDosesResponse | null> {
 export async function updateDoseStatusApi(
   doseId: string,
   status: DoseStatus,
-  source: "caregiver_ui" | "telegram" = "caregiver_ui"
+  source: "caregiver_ui" | "patient_ui" | "telegram" = "caregiver_ui"
 ): Promise<{ success: boolean; dose?: Dose; error?: string }> {
   try {
     const res = await fetch("/api/doses", {
@@ -65,8 +67,7 @@ export async function updateDoseStatusApi(
 }
 
 export async function uploadPrescriptionFile(
-  file?: File,
-  isDemo: boolean = false
+  file: File
 ): Promise<{
   success: boolean;
   medicines?: Medicine[];
@@ -76,7 +77,7 @@ export async function uploadPrescriptionFile(
     doctorName: string;
     clinic?: string;
     courseDays: number;
-    source: "gemini-3.8-flash" | "demo_fallback";
+    source: string;
     confidence: number;
     notice?: string;
     uncertainItemNotice?: string;
@@ -84,43 +85,25 @@ export async function uploadPrescriptionFile(
   error?: string;
 }> {
   try {
-    if (file) {
-      const formData = new FormData();
-      formData.append("file", file);
-      if (isDemo) {
-        formData.append("isDemo", "true");
-      }
-      const res = await fetch("/api/prescriptions", {
-        method: "POST",
-        body: formData,
-      });
-      const json = await res.json();
-      if (res.ok && json.success) {
-        return {
-          success: true,
-          medicines: json.ocrResult?.medicines,
-          prescription: json.prescription,
-          ocrResult: json.ocrResult,
-        };
-      }
-      return { success: false, error: json.error || "OCR upload failed" };
-    } else {
-      const res = await fetch("/api/prescriptions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileName: "prescription.png", isDemo }),
-      });
-      const json = await res.json();
-      if (res.ok && json.success) {
-        return {
-          success: true,
-          medicines: json.ocrResult?.medicines,
-          prescription: json.prescription,
-          ocrResult: json.ocrResult,
-        };
-      }
-      return { success: false, error: json.error || "OCR processing failed" };
+    if (!file) {
+      return { success: false, error: "Please select a prescription image to upload." };
     }
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/prescriptions", {
+      method: "POST",
+      body: formData,
+    });
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return {
+        success: true,
+        medicines: json.ocrResult?.medicines,
+        prescription: json.prescription,
+        ocrResult: json.ocrResult,
+      };
+    }
+    return { success: false, error: json.error || "OCR upload failed" };
   } catch (err: unknown) {
     const error = err instanceof Error ? err.message : "Network error";
     return { success: false, error };
@@ -303,7 +286,7 @@ export async function fetchTelegramStatus(): Promise<{
 }
 
 export async function connectTelegram(
-  action: "create" | "disconnect" | "test_connect_dev" | "send_test_reminder" = "create"
+  action: "create" | "disconnect" | "send_test_reminder" = "create"
 ): Promise<{
   success: boolean;
   deepLink?: string;
@@ -391,3 +374,57 @@ export async function resetBackendState(): Promise<boolean> {
     return false;
   }
 }
+
+export type HelpRequestsResponse = {
+  helpRequests: HelpRequest[];
+  activeRequests: HelpRequest[];
+  activeCount: number;
+  latestActive: HelpRequest | null;
+};
+
+export async function fetchHelpRequests(): Promise<HelpRequestsResponse | null> {
+  try {
+    const res = await fetch("/api/help-requests", { cache: "no-store" });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.data || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function createHelpRequestApi(
+  message?: string
+): Promise<{ success: boolean; data?: HelpRequest; error?: string }> {
+  try {
+    const res = await fetch("/api/help-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+    const json = await res.json();
+    return { success: res.ok && json.success, data: json.data, error: json.error };
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : "Failed to create help request";
+    return { success: false, error };
+  }
+}
+
+export async function updateHelpRequestStatusApi(
+  id: string,
+  status: HelpRequestStatus
+): Promise<{ success: boolean; data?: HelpRequest; error?: string }> {
+  try {
+    const res = await fetch("/api/help-requests", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status }),
+    });
+    const json = await res.json();
+    return { success: res.ok && json.success, data: json.data, error: json.error };
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : "Failed to update help request";
+    return { success: false, error };
+  }
+}
+

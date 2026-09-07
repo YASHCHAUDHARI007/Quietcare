@@ -30,10 +30,13 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { action, patientId = "patient_meena", doseId } = body;
+    const { action, patientId, doseId } = body;
+
+    const state = await QuietcareRepository.getState();
+    const effectivePatientId = patientId || state.patient.id || "patient_primary";
 
     if (action === "create" || action === "create_link") {
-      const linkInfo = await TelegramService.createConnectLink(patientId);
+      const linkInfo = await TelegramService.createConnectLink(effectivePatientId);
 
       return NextResponse.json({
         success: true,
@@ -50,24 +53,6 @@ export async function POST(req: Request) {
         success: true,
         telegram: updated,
         message: "Telegram disconnected",
-      });
-    }
-
-    if (action === "test_connect_dev") {
-      // Allows verifying the connection transition in dev/demo environments
-      // without needing an external webhook ping
-      const state = await QuietcareRepository.getState();
-      const demoChatId = 987654321;
-      const updated = await QuietcareRepository.connectTelegram(
-        state.patient.id,
-        demoChatId,
-        "meena_telegram_user"
-      );
-
-      return NextResponse.json({
-        success: true,
-        telegram: updated,
-        message: `Verified Telegram connection established for ${state.patient.name}`,
       });
     }
 

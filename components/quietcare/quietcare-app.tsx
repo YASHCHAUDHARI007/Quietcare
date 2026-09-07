@@ -14,6 +14,7 @@ import type {
   Dose,
   DoseStatus,
   FlowScreen,
+  HelpRequest,
   Medicine,
   PatientProfile,
   PrescriptionRecord,
@@ -25,12 +26,14 @@ import {
   createMedicine,
   deleteMedicine,
   fetchAppState,
+  fetchHelpRequests,
   fetchTelegramStatus,
   fetchTodayDoses,
   resetBackendState,
   saveRoutineSettings,
   triggerTestDoseReminder,
   updateDoseStatusApi,
+  updateHelpRequestStatusApi,
   updateMedicine,
   updateMedicineQuantity,
   uploadPrescriptionFile,
@@ -55,6 +58,7 @@ import {
   UserCircle,
 } from "./icons";
 import { LoginScreen } from "./login-screen";
+import { PatientScreen } from "./patient-screen";
 
 const initialProgress: QuietcareProgress = {
   screen: "home",
@@ -342,12 +346,10 @@ function EditPrescriptionModal({
 function UploadActions({
   onChoose,
   onTake,
-  onDemo,
   selectedName,
 }: {
   onChoose: () => void;
   onTake: () => void;
-  onDemo?: () => void;
   selectedName?: string;
 }) {
   return (
@@ -363,30 +365,6 @@ function UploadActions({
           <Camera /> Take photo
         </Button>
       </div>
-      {onDemo && (
-        <button
-          type="button"
-          onClick={onDemo}
-          style={{
-            background: "#fffbeb",
-            border: "1px dashed #f59e0b",
-            borderRadius: 10,
-            padding: "9px 12px",
-            fontSize: 12,
-            fontWeight: 600,
-            color: "#92400e",
-            cursor: "pointer",
-            marginTop: 8,
-            width: "100%",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 6,
-          }}
-        >
-          🧪 Try Demo Prescription (Sample Clinical Rx)
-        </button>
-      )}
     </Bottom>
   );
 }
@@ -400,7 +378,29 @@ function UploadModal({
   onClose: () => void;
   onSelect: (file?: File) => void;
 }) {
-  const input = useRef<HTMLInputElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const cameraInput = useRef<HTMLInputElement>(null);
+  const [dragActive, setDragActive] = useState(false);
+
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      onSelect(e.dataTransfer.files[0]);
+    }
+  };
+
   return (
     <div className="modal-scrim modal-scrim--center">
       <section className="upload-dialog" role="dialog" aria-modal="true" aria-labelledby="upload-title">
@@ -410,16 +410,39 @@ function UploadModal({
             <Image src="/assets/icons/close.svg" alt="" width={24} height={24} />
           </button>
         </div>
-        <div className="upload-drop">
+        <div
+          className={`upload-drop ${dragActive ? "upload-drop--active" : ""}`}
+          onDragEnter={handleDrag}
+          onDragLeave={handleDrag}
+          onDragOver={handleDrag}
+          onDrop={handleDrop}
+          style={{
+            borderColor: dragActive ? "var(--color-primary, #2563eb)" : undefined,
+            background: dragActive ? "rgba(37, 99, 235, 0.04)" : undefined,
+          }}
+        >
           <Folder size={32} />
-          <strong>Choose a file from your device</strong>
-          <span>{medicine ? "JPG or PNG (max 10MB)" : "JPG, PNG or WebP (max 10MB)"}</span>
-          <Button onClick={() => input.current?.click()}>Browse files</Button>
+          <strong>Drop photo here or choose from device</strong>
+          <span>{medicine ? "JPG, PNG or WebP (max 10MB)" : "JPG, PNG or WebP (max 10MB)"}</span>
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", justifyContent: "center" }}>
+            <Button onClick={() => fileInput.current?.click()}>Browse files</Button>
+            <Button variant="secondary" onClick={() => cameraInput.current?.click()}>
+              <Camera size={14} /> Camera
+            </Button>
+          </div>
           <input
-            ref={input}
+            ref={fileInput}
             className="sr-only"
             type="file"
             accept={medicine ? "image/*" : "image/jpeg,image/png,image/webp"}
+            onChange={(event) => onSelect(event.target.files?.[0])}
+          />
+          <input
+            ref={cameraInput}
+            className="sr-only"
+            type="file"
+            accept="image/*"
+            capture="environment"
             onChange={(event) => onSelect(event.target.files?.[0])}
           />
         </div>
@@ -436,7 +459,7 @@ function PrescriptionReview({
   medicinesList,
   patientName,
   courseDays,
-  ocrSource = "demo_fallback",
+  ocrSource = "gemini-3.8-flash",
   ocrNotice,
   uploadedImageUrl,
   onEdit,
@@ -447,7 +470,7 @@ function PrescriptionReview({
   medicinesList: Medicine[];
   patientName: string;
   courseDays: number;
-  ocrSource?: "gemini-3.8-flash" | "demo_fallback";
+  ocrSource?: string;
   ocrNotice?: string;
   uploadedImageUrl?: string;
   onEdit: (med?: Medicine) => void;
@@ -455,14 +478,13 @@ function PrescriptionReview({
   onExpand: () => void;
 }) {
   const uncertainCount = medicinesList.filter((m) => m.uncertain).length;
-  const isAi = ocrSource === "gemini-3.8-flash";
 
   return (
     <main className="screen-content screen-content--review">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
         <h1 style={{ margin: 0 }}>Review prescription</h1>
-        <span className={isAi ? "badge-ai" : "badge-demo"}>
-          {isAi ? "✨ Gemini 3.8 Flash OCR" : "📋 Demo Prescription"}
+        <span className="badge-ai">
+          {ocrSource === "gemini-3.8-flash" ? "✨ Gemini Multimodal OCR" : "Prescription OCR"}
         </span>
       </div>
       <p style={{ margin: "0 0 12px" }}>
@@ -903,6 +925,9 @@ function HomeScreen({
   lastDose,
   nextDose,
   telegramData,
+  activeHelpRequests = [],
+  onResolveHelpRequest,
+  onSwitchToPatientView,
   onToggleDoseStatus,
   onSendReminder,
   onAddPrescription,
@@ -929,6 +954,9 @@ function HomeScreen({
   lastDose: Dose | null;
   nextDose: Dose | null;
   telegramData: TelegramConnection;
+  activeHelpRequests?: HelpRequest[];
+  onResolveHelpRequest?: (id: string) => Promise<void>;
+  onSwitchToPatientView?: () => void;
   onToggleDoseStatus: (doseId: string, currentStatus: DoseStatus) => void;
   onSendReminder: (doseId?: string) => void;
   onAddPrescription: () => void;
@@ -951,6 +979,27 @@ function HomeScreen({
       <header className="home-header">
         <strong>quietcare</strong>
         <div style={{ position: "absolute", right: 16, top: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          {onSwitchToPatientView && (
+            <button
+              type="button"
+              className="header-patient-btn"
+              onClick={onSwitchToPatientView}
+              title="Switch to Patient View"
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                background: "#f0fdf4",
+                border: "1px solid #86efac",
+                color: "#166534",
+                padding: "3px 8px",
+                borderRadius: 8,
+                cursor: "pointer",
+              }}
+              id="header-switch-patient-btn"
+            >
+              Patient View
+            </button>
+          )}
           <button
             type="button"
             className="header-logout-btn"
@@ -969,14 +1018,14 @@ function HomeScreen({
           </button>
         </div>
         <span onClick={onOpenProfile} style={{ cursor: "pointer" }}>
-          {patientData.name}
+          {patientData.name || "Parent Profile"}
           <Image src="/assets/icons/chevron-down.svg" alt="" width={14} height={14} />
         </span>
       </header>
 
       <div className="nav-pill-group">
         <button type="button" className="nav-pill nav-pill--active">
-          {patientData.name}&apos;s Routine
+          {patientData.name ? `${patientData.name}'s Routine` : "Care Routine"}
         </button>
         <button type="button" className="nav-pill" onClick={onOpenSetup}>
           Setup Walkthrough
@@ -987,6 +1036,108 @@ function HomeScreen({
       </div>
 
       <div className="home-body">
+        {/* 🆘 CAREGIVER HELP ALERT (Real Application State) */}
+        {activeHelpRequests && activeHelpRequests.length > 0 && (
+          <div
+            className="caregiver-help-alert-card"
+            id="caregiver-active-help-alert"
+            style={{
+              background: "#fff1f2",
+              border: "2px solid #f43f5e",
+              borderRadius: 16,
+              padding: "16px 18px",
+              marginBottom: 16,
+              boxShadow: "0 6px 18px rgba(244, 63, 94, 0.18)",
+              animation: "slideDown 0.25s ease-out",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+              <div
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: "50%",
+                  background: "#ffe4e6",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0,
+                  fontSize: 22,
+                }}
+              >
+                🆘
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <strong style={{ fontSize: 16, color: "#9f1239", fontWeight: 800 }}>
+                    Patient Needs Help!
+                  </strong>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      background: "#fda4af",
+                      color: "#881337",
+                      padding: "2px 8px",
+                      borderRadius: 6,
+                    }}
+                  >
+                    ACTIVE ALERT
+                  </span>
+                </div>
+                <p style={{ margin: "4px 0 2px", fontSize: 13, color: "#881337", lineHeight: "17px" }}>
+                  The patient requested assistance.
+                </p>
+                <span style={{ display: "block", fontSize: 12, color: "#9f1239", fontWeight: 600 }}>
+                  Time: {new Date(activeHelpRequests[0].createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                </span>
+
+                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                  {onSwitchToPatientView && (
+                    <button
+                      type="button"
+                      onClick={onSwitchToPatientView}
+                      style={{
+                        flex: 1,
+                        height: 38,
+                        background: "#ffffff",
+                        border: "1.5px solid #f43f5e",
+                        borderRadius: 8,
+                        color: "#9f1239",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                      id="caregiver-view-patient-btn"
+                    >
+                      View Patient
+                    </button>
+                  )}
+                  {onResolveHelpRequest && (
+                    <button
+                      type="button"
+                      onClick={() => onResolveHelpRequest(activeHelpRequests[0].id)}
+                      style={{
+                        flex: 1.2,
+                        height: 38,
+                        background: "#e11d48",
+                        border: "none",
+                        borderRadius: 8,
+                        color: "#ffffff",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                      id="caregiver-resolve-help-btn"
+                    >
+                      ✓ Mark Resolved
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Telegram Connection Status Card */}
         <div className={`telegram-connect-card ${telegramData.connected ? "" : "telegram-connect-card--pending"}`}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -996,7 +1147,7 @@ function HomeScreen({
               </span>
               <strong style={{ display: "block", fontSize: 13, color: "var(--color-text)", marginTop: 2 }}>
                 {telegramData.connected
-                  ? `Active with ${patientData.name} (${telegramData.botHandle || "@QuietcareReminderBot"})`
+                  ? `Active with ${patientData.name || "Parent"} (${telegramData.botHandle || "@QuietcareReminderBot"})`
                   : "Parent not connected on Telegram"}
               </strong>
               <p style={{ margin: "3px 0 0", fontSize: 11, color: "var(--color-text-2)" }}>
@@ -1031,72 +1182,83 @@ function HomeScreen({
         <section className="today-card dose-card-interactive">
           <div className="section-title">
             <h2>Today&apos;s Doses</h2>
-            <span style={{ background: allCompleted ? "#15803d" : "#16a34a" }}>
-              {allCompleted ? "All doses completed" : "On track"}
-            </span>
-          </div>
-
-          <div className="today-grid">
-            <div
-              className="dose-ring"
-              style={{
-                background: `conic-gradient(#22c55e 0 ${percentage}%, #cbd5e1 ${percentage}% 100%)`,
-              }}
-            >
-              <span>Today</span>
-              <b>{takenCount} / {totalCount}</b>
-            </div>
-
-            <div className="dose-times">
-              {dosesList.map((dose) => {
-                const isNight = dose.timing.toLowerCase().includes("dinner") || dose.timing.toLowerCase().includes("bed");
-                const isTaken = dose.status === "taken";
-                const isSent = dose.status === "reminder_sent";
-                const isNotYet = dose.status === "not_yet";
-                const isMissed = dose.status === "missed";
-
-                return (
-                  <div className="dose-item-action" key={dose.id}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
-                      {isNight ? <Moon size={20} /> : <Sun size={20} />}
-                      <div style={{ minWidth: 0 }}>
-                        <span style={{ fontSize: 13, fontWeight: 700, display: "block" }}>
-                          {dose.scheduledTimeLabel}
-                          <strong style={{ fontWeight: 500, marginLeft: 6, fontSize: 11, color: "var(--color-text-2)" }}>
-                            {dose.timing}
-                          </strong>
-                        </span>
-                        <span style={{ display: "block", fontSize: 11, color: "var(--color-text-3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {dose.medicineName} ({dose.doseAmount})
-                        </span>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      className={`dose-status-tag dose-status-tag--${dose.status}`}
-                      onClick={() => onToggleDoseStatus(dose.id, dose.status)}
-                      title={`Status: ${dose.status}. Click to change.`}
-                    >
-                      {isTaken && "✓ Taken"}
-                      {isSent && "🔔 Sent"}
-                      {isNotYet && "⏰ Postponed"}
-                      {isMissed && "⚠️ Missed"}
-                      {!isTaken && !isSent && !isNotYet && !isMissed && "⏳ Scheduled"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-            {lastDose?.takenAt && (
-              <div style={{ marginTop: 10, padding: "6px 10px", background: "#f8fafc", borderRadius: 8, fontSize: 11, color: "var(--color-text-3)", display: "flex", justifyContent: "space-between" }}>
-                <span>Last confirmed dose:</span>
-                <strong style={{ color: "#15803d" }}>
-                  {lastDose.medicineName} ({new Date(lastDose.takenAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })})
-                </strong>
-              </div>
+            {dosesList.length > 0 && (
+              <span style={{ background: allCompleted ? "#15803d" : "#16a34a" }}>
+                {allCompleted ? "All doses completed" : "On track"}
+              </span>
             )}
           </div>
+
+          {dosesList.length > 0 ? (
+            <div className="today-grid">
+              <div
+                className="dose-ring"
+                style={{
+                  background: `conic-gradient(#22c55e 0 ${percentage}%, #cbd5e1 ${percentage}% 100%)`,
+                }}
+              >
+                <span>Today</span>
+                <b>{takenCount} / {totalCount}</b>
+              </div>
+
+              <div className="dose-times">
+                {dosesList.map((dose) => {
+                  const isNight = dose.timing.toLowerCase().includes("dinner") || dose.timing.toLowerCase().includes("bed");
+                  const isTaken = dose.status === "taken";
+                  const isSent = dose.status === "reminder_sent";
+                  const isNotYet = dose.status === "not_yet";
+                  const isMissed = dose.status === "missed";
+
+                  return (
+                    <div className="dose-item-action" key={dose.id}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+                        {isNight ? <Moon size={20} /> : <Sun size={20} />}
+                        <div style={{ minWidth: 0 }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, display: "block" }}>
+                            {dose.scheduledTimeLabel}
+                            <strong style={{ fontWeight: 500, marginLeft: 6, fontSize: 11, color: "var(--color-text-2)" }}>
+                              {dose.timing}
+                            </strong>
+                          </span>
+                          <span style={{ display: "block", fontSize: 11, color: "var(--color-text-3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {dose.medicineName} ({dose.doseAmount})
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        className={`dose-status-tag dose-status-tag--${dose.status}`}
+                        onClick={() => onToggleDoseStatus(dose.id, dose.status)}
+                        title={`Status: ${dose.status}. Click to change.`}
+                      >
+                        {isTaken && "✓ Taken"}
+                        {isSent && "🔔 Sent"}
+                        {isNotYet && "⏰ Postponed"}
+                        {isMissed && "⚠️ Missed"}
+                        {!isTaken && !isSent && !isNotYet && !isMissed && "⏳ Scheduled"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              {lastDose?.takenAt && (
+                <div style={{ marginTop: 10, padding: "6px 10px", background: "#f8fafc", borderRadius: 8, fontSize: 11, color: "var(--color-text-3)", display: "flex", justifyContent: "space-between" }}>
+                  <span>Last confirmed dose:</span>
+                  <strong style={{ color: "#15803d" }}>
+                    {lastDose.medicineName} ({new Date(lastDose.takenAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })})
+                  </strong>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ padding: "20px 16px", textAlign: "center" }}>
+              <p style={{ margin: "0 0 12px", color: "var(--color-text-2)", fontSize: 13 }}>
+                No active routine found. Add a prescription to generate scheduled doses and reminders.
+              </p>
+              <Button onClick={onAddPrescription}>+ Add Prescription</Button>
+            </div>
+          )}
         </section>
 
         {/* Refill Alert */}
@@ -1125,9 +1287,10 @@ function HomeScreen({
         <section className="pouches-card">
           <div>
             <span>
-              {patientData.name}&apos;s routine<strong>Prepared through {patientData.preparedThrough || "Sunday"}</strong>
+              {patientData.name ? `${patientData.name}'s routine` : "Medication routine"}
+              <strong>{medicinesList.length > 0 ? `Prepared through ${patientData.preparedThrough || "upcoming week"}` : "No medicines added yet"}</strong>
             </span>
-            <b>{patientData.availableDays || patientData.daysLeft || 10} days left</b>
+            <b>{medicinesList.length > 0 ? `${patientData.availableDays || 0} days left` : "0 days"}</b>
           </div>
           <Image src="/assets/images/prepared-pouches.png" alt="Four prepared medicine pouches" width={340} height={117} />
           <div className="card-actions">
@@ -1168,13 +1331,13 @@ function HomeScreen({
 export function QuietcareApp() {
   const [progress, setProgress] = useState(initialProgress);
   const [patientData, setPatientData] = useState<PatientProfile>(initialPatient);
-  const [medicinesData, setMedicinesData] = useState<Medicine[]>(initialMedicinesList);
+  const [medicinesData, setMedicinesData] = useState<Medicine[]>(initialMedicinesList || []);
   const [prescriptionsData, setPrescriptionsData] = useState<PrescriptionRecord[]>([]);
   const [dosesData, setDosesData] = useState<Dose[]>([]);
   const [dosesStats, setDosesStats] = useState({
-    total: 4,
-    taken: 2,
-    pending: 2,
+    total: 0,
+    taken: 0,
+    pending: 0,
     reminderSent: 0,
     missed: 0,
     notYet: 0,
@@ -1187,14 +1350,37 @@ export function QuietcareApp() {
     connected: false,
     botHandle: "@QuietcareReminderBot",
     botUsername: "QuietcareReminderBot",
-    deepLink: "https://t.me/QuietcareReminderBot?start=qc_meena_demo",
-    parentName: "Meena",
+    deepLink: "",
+    parentName: "",
   });
 
   const [serverLive, setServerLive] = useState(true);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        return localStorage.getItem("quietcare_auth") === "true";
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  });
 
-  const [ocrResultSource, setOcrResultSource] = useState<"gemini-3.8-flash" | "demo_fallback">("demo_fallback");
+  const [userRole, setUserRole] = useState<"caregiver" | "patient">(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const r = localStorage.getItem("quietcare_role");
+        if (r === "caregiver" || r === "patient") return r;
+      } catch {
+        return "patient";
+      }
+    }
+    return "patient";
+  });
+
+  const [activeHelpRequests, setActiveHelpRequests] = useState<HelpRequest[]>([]);
+
+  const [ocrResultSource, setOcrResultSource] = useState<string>("gemini-3.8-flash");
   const [ocrNotice, setOcrNotice] = useState<string>("");
 
   const [prescriptionModal, setPrescriptionModal] = useState(false);
@@ -1216,10 +1402,24 @@ export function QuietcareApp() {
   const refreshDoses = useCallback(async () => {
     const res = await fetchTodayDoses();
     if (res) {
-      setDosesData(res.doses);
-      setDosesStats(res.stats);
+      setDosesData(res.doses || []);
+      setDosesStats(res.stats || {
+        total: 0,
+        taken: 0,
+        pending: 0,
+        reminderSent: 0,
+        missed: 0,
+        notYet: 0,
+      });
       setLastDose(res.lastDose);
       setNextDose(res.nextDose);
+    }
+  }, []);
+
+  const refreshHelpRequests = useCallback(async () => {
+    const res = await fetchHelpRequests();
+    if (res && res.activeRequests) {
+      setActiveHelpRequests(res.activeRequests);
     }
   }, []);
 
@@ -1228,16 +1428,17 @@ export function QuietcareApp() {
     if (state) {
       setServerLive(true);
       if (state.patient) setPatientData(state.patient);
-      if (state.medicines && state.medicines.length > 0) setMedicinesData(state.medicines);
-      if (state.prescriptions) setPrescriptionsData(state.prescriptions);
+      setMedicinesData(state.medicines || []);
+      setPrescriptionsData(state.prescriptions || []);
       if (state.telegram) setTelegramData(state.telegram);
-      if (state.activityLogs) setActivityLogsData(state.activityLogs);
-      if (state.doses && state.doses.length > 0) {
-        setDosesData(state.doses);
+      setActivityLogsData(state.activityLogs || []);
+      setDosesData(state.doses || []);
+      if (state.helpRequests) {
+        setActiveHelpRequests(state.helpRequests.filter((h) => h.status !== "resolved"));
       }
     }
-    await refreshDoses();
-  }, [refreshDoses]);
+    await Promise.all([refreshDoses(), refreshHelpRequests()]);
+  }, [refreshDoses, refreshHelpRequests]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1245,26 +1446,81 @@ export function QuietcareApp() {
       if (!isMounted || !state) return;
       setServerLive(true);
       if (state.patient) setPatientData(state.patient);
-      if (state.medicines && state.medicines.length > 0) setMedicinesData(state.medicines);
-      if (state.prescriptions) setPrescriptionsData(state.prescriptions);
+      setMedicinesData(state.medicines || []);
+      setPrescriptionsData(state.prescriptions || []);
       if (state.telegram) setTelegramData(state.telegram);
-      if (state.activityLogs) setActivityLogsData(state.activityLogs);
-      if (state.doses && state.doses.length > 0) {
-        setDosesData(state.doses);
-      }
+      setActivityLogsData(state.activityLogs || []);
+      setDosesData(state.doses || []);
 
-      const dosesRes = await fetchTodayDoses();
-      if (!isMounted || !dosesRes) return;
-      setDosesData(dosesRes.doses);
-      setDosesStats(dosesRes.stats);
-      setLastDose(dosesRes.lastDose);
-      setNextDose(dosesRes.nextDose);
+      const [dosesRes, helpRes] = await Promise.all([
+        fetchTodayDoses(),
+        fetchHelpRequests(),
+      ]);
+      if (!isMounted) return;
+      if (dosesRes) {
+        setDosesData(dosesRes.doses);
+        setDosesStats(dosesRes.stats);
+        setLastDose(dosesRes.lastDose);
+        setNextDose(dosesRes.nextDose);
+      }
+      if (helpRes && helpRes.activeRequests) {
+        setActiveHelpRequests(helpRes.activeRequests);
+      }
     });
+
+    const pollInterval = setInterval(() => {
+      if (!isMounted) return;
+      fetchTodayDoses().then((res) => {
+        if (!isMounted || !res) return;
+        setDosesData(res.doses);
+        setDosesStats(res.stats);
+        setLastDose(res.lastDose);
+        setNextDose(res.nextDose);
+      });
+      fetchHelpRequests().then((res) => {
+        if (!isMounted || !res) return;
+        setActiveHelpRequests(res.activeRequests || []);
+      });
+    }, 5000);
 
     return () => {
       isMounted = false;
+      clearInterval(pollInterval);
     };
   }, []);
+
+  // Browser notification for Caregiver when Patient requests help
+  useEffect(() => {
+    if (activeHelpRequests.length > 0 && typeof window !== "undefined" && "Notification" in window) {
+      if (Notification.permission === "granted") {
+        try {
+          new Notification("🆘 Quietcare", {
+            body: `${patientData.name || "Your patient"} has requested help.`,
+            icon: "/assets/brand/quietcare-logo.png",
+          });
+        } catch (e) {
+          console.warn("Notification error:", e);
+        }
+      } else if (Notification.permission !== "denied") {
+        try {
+          Notification.requestPermission();
+        } catch {}
+      }
+    }
+  }, [activeHelpRequests.length, patientData.name]);
+
+  const handleResolveHelpRequest = async (id: string) => {
+    try {
+      const res = await updateHelpRequestStatusApi(id, "resolved");
+      if (res.success) {
+        showToast("✓ Patient help request marked resolved.");
+        await refreshHelpRequests();
+        await refreshState();
+      }
+    } catch (err) {
+      console.error("Failed to resolve help request:", err);
+    }
+  };
 
   const handleLogout = () => {
     try {
@@ -1276,22 +1532,7 @@ export function QuietcareApp() {
     showToast("Signed out of session");
   };
 
-  // Screen Transitions (Note: "waiting" is purposefully excluded from timer transitions!)
-  useEffect(() => {
-    const transitions: Partial<Record<FlowScreen, FlowScreen>> = {
-      "prescription-loading": "prescription-review",
-      "medicine-loading": "medicine-review",
-      "routine-loading": "routine-ready",
-      "routine-ready": "labels-choice",
-    };
-    const next = transitions[progress.screen];
-    if (!next) return;
-    const timer = window.setTimeout(
-      () => setProgress((current) => ({ ...current, screen: next })),
-      1400
-    );
-    return () => window.clearTimeout(timer);
-  }, [progress.screen]);
+  // Note: Loading screens transition deterministically upon API resolution in upload() and handleCreateRoutine()
 
   // REAL Telegram Polling on the "waiting" screen
   useEffect(() => {
@@ -1347,8 +1588,12 @@ export function QuietcareApp() {
     setUploadedImageUrl(null);
   };
 
-  const upload = async (file?: File, isDemo: boolean = false) => {
-    if (file) setSelectedName(file.name);
+  const upload = async (file?: File) => {
+    if (!file) {
+      showToast("Please select or capture an image to proceed");
+      return;
+    }
+    setSelectedName(file.name);
     const targetScreen =
       progress.screen === "prescription-upload"
         ? "prescription-loading"
@@ -1356,7 +1601,7 @@ export function QuietcareApp() {
     go(targetScreen);
 
     if (progress.screen === "prescription-upload") {
-      const res = await uploadPrescriptionFile(file, isDemo);
+      const res = await uploadPrescriptionFile(file);
       if (res.success && res.medicines) {
         setMedicinesData(res.medicines);
         if (res.prescription?.imageUrl) {
@@ -1365,11 +1610,7 @@ export function QuietcareApp() {
         if (res.ocrResult) {
           setOcrResultSource(res.ocrResult.source);
           setOcrNotice(res.ocrResult.notice || "");
-          if (res.ocrResult.source === "gemini-3.8-flash") {
-            showToast("✨ Prescription analyzed live with Gemini 3.8 Flash");
-          } else {
-            showToast("Sample clinical prescription loaded (Demo Mode)");
-          }
+          showToast("✨ Prescription analyzed with Gemini OCR");
         }
         await refreshState();
         go("prescription-review");
@@ -1462,13 +1703,9 @@ export function QuietcareApp() {
     showToast("Telegram invite link generated");
   };
 
-  const handleDevConnectTelegram = async () => {
-    const res = await connectTelegram("test_connect_dev");
-    if (res.success && res.telegram) {
-      setTelegramData(res.telegram);
-      showToast("✓ Telegram connected in test mode!");
-      go("connected");
-    }
+  const handleSkipTelegram = () => {
+    showToast("Telegram setup skipped. You can link anytime from the dashboard.");
+    go("home");
   };
 
   const handleFinishTelegram = async () => {
@@ -1535,11 +1772,57 @@ export function QuietcareApp() {
       <div className="app-shell">
         <LoginScreen
           serverLive={serverLive}
-          onLoginSuccess={() => {
+          onLoginSuccess={(user) => {
             setIsAuthenticated(true);
+            setUserRole(user.role);
+            try {
+              localStorage.setItem("quietcare_auth", "true");
+              localStorage.setItem("quietcare_role", user.role);
+            } catch {}
             setProgress((prev) => ({ ...prev, screen: "home" }));
-            showToast("✓ Signed in successfully. Welcome to Quietcare!");
+            showToast(`✓ Welcome to Quietcare ${user.role === "patient" ? "Patient View" : "Caregiver Portal"}!`);
           }}
+        />
+        {toastMessage && (
+          <div
+            role="status"
+            style={{
+              position: "absolute",
+              top: 50,
+              left: 16,
+              right: 16,
+              background: "rgba(15, 23, 42, 0.95)",
+              color: "white",
+              padding: "10px 14px",
+              borderRadius: 12,
+              fontSize: 12,
+              fontWeight: 600,
+              textAlign: "center",
+              zIndex: 40,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+            }}
+          >
+            {toastMessage}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // PATIENT UI VIEW
+  if (userRole === "patient") {
+    return (
+      <div className="app-shell" style={{ maxWidth: 430 }}>
+        <PatientScreen
+          patientProfile={patientData}
+          onSwitchToCaregiver={() => {
+            setUserRole("caregiver");
+            try {
+              localStorage.setItem("quietcare_role", "caregiver");
+            } catch {}
+            showToast("Switched to Caregiver Portal");
+          }}
+          onLogout={handleLogout}
         />
         {toastMessage && (
           <div
@@ -1579,6 +1862,15 @@ export function QuietcareApp() {
           lastDose={lastDose}
           nextDose={nextDose}
           telegramData={telegramData}
+          activeHelpRequests={activeHelpRequests}
+          onResolveHelpRequest={handleResolveHelpRequest}
+          onSwitchToPatientView={() => {
+            setUserRole("patient");
+            try {
+              localStorage.setItem("quietcare_role", "patient");
+            } catch {}
+            showToast("Switched to Patient View");
+          }}
           onToggleDoseStatus={handleToggleDoseStatus}
           onSendReminder={handleSendTestReminder}
           onAddPrescription={startNewPrescription}
@@ -1695,12 +1987,12 @@ export function QuietcareApp() {
                   <div key={rx.id} style={{ padding: 12, borderRadius: 10, background: "var(--color-surface)", border: "1px solid var(--color-border-2)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <strong style={{ fontSize: 12 }}>{rx.fileName}</strong>
-                      <span className={rx.ocrSource === "gemini-3.8-flash" ? "badge-ai" : "badge-demo"}>
-                        {rx.ocrSource === "gemini-3.8-flash" ? "Gemini OCR" : "Fallback"}
+                      <span className="badge-ai">
+                        {rx.ocrSource === "gemini-3.8-flash" ? "Gemini OCR" : "Prescription OCR"}
                       </span>
                     </div>
                     <span style={{ display: "block", fontSize: 11, color: "var(--color-text-2)", marginTop: 4 }}>
-                      {rx.doctorName || "Dr. S. Kulkarni"} • {rx.clinic || "Clinic"}
+                      {rx.doctorName ? `${rx.doctorName}` : "Prescribing Doctor"}{rx.clinic ? ` • ${rx.clinic}` : ""}
                     </span>
                     <span style={{ display: "block", fontSize: 10, color: "var(--color-text-3)", marginTop: 2 }}>
                       Status: {rx.status} • {rx.courseDays}-day course • {rx.medicinesFound} medicines
@@ -1708,14 +2000,8 @@ export function QuietcareApp() {
                   </div>
                 ))
               ) : (
-                <div style={{ padding: 12, borderRadius: 10, background: "var(--color-surface)", border: "1px solid var(--color-border-2)" }}>
-                  <strong style={{ fontSize: 12 }}>{patientData.prescriptionName}</strong>
-                  <span style={{ display: "block", fontSize: 11, color: "var(--color-text-2)", marginTop: 2 }}>
-                    Dr. S. Kulkarni • Cardiology Clinic
-                  </span>
-                  <span style={{ display: "block", fontSize: 10, color: "var(--color-text-3)", marginTop: 4 }}>
-                    Added recently • {patientData.courseDays}-day course
-                  </span>
+                <div style={{ padding: 20, textAlign: "center", color: "var(--color-text-3)", fontSize: 13, background: "var(--color-surface)", borderRadius: 10, border: "1px solid var(--color-border-2)" }}>
+                  No prescriptions uploaded yet. Tap <strong>+ Add prescription</strong> on the home dashboard to upload one.
                 </div>
               )}
             </div>
@@ -1891,6 +2177,65 @@ export function QuietcareApp() {
             </div>
           </DetailModal>
         )}
+
+        {toastMessage && (
+          <div
+            role="status"
+            style={{
+              position: "absolute",
+              top: 50,
+              left: 16,
+              right: 16,
+              background: "rgba(15, 23, 42, 0.95)",
+              color: "white",
+              padding: "10px 14px",
+              borderRadius: 12,
+              fontSize: 12,
+              fontWeight: 600,
+              textAlign: "center",
+              zIndex: 45,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+            }}
+          >
+            {toastMessage}
+          </div>
+        )}
+
+        {prescriptionModal && selectedUncertainMed && (
+          <EditPrescriptionModal
+            medicine={selectedUncertainMed}
+            medicinesList={medicinesData}
+            onClose={() => setPrescriptionModal(false)}
+            onSave={handleSavePrescriptionTiming}
+          />
+        )}
+
+        {medicineEditorOpen && (
+          <MedicineEditorModal
+            medicine={editingMedicine}
+            onClose={() => setMedicineEditorOpen(false)}
+            onSave={handleSaveMedicineEditor}
+          />
+        )}
+
+        {lightboxSrc && (
+          <ImageLightbox
+            src={lightboxSrc}
+            alt="Prescription document"
+            onClose={() => setLightboxSrc(null)}
+          />
+        )}
+
+        {uploadModal && (
+          <UploadModal
+            medicine={false}
+            onClose={() => setUploadModal(false)}
+            onSelect={(file) => {
+              setUploadModal(false);
+              upload(file);
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -1934,7 +2279,7 @@ export function QuietcareApp() {
           <Bottom>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%" }}>
               <Button onClick={() => go("home")}>
-                View Meena&apos;s Routine (Dashboard)
+                View {patientData.name ? `${patientData.name}'s` : "Parent's"} Routine (Dashboard)
               </Button>
               <Button variant="secondary" onClick={() => go("prescription-upload")}>
                 + Set Up New Prescription
@@ -1958,8 +2303,7 @@ export function QuietcareApp() {
           <UploadActions
             selectedName={selectedName}
             onChoose={() => setUploadModal(true)}
-            onTake={() => upload()}
-            onDemo={() => upload(undefined, true)}
+            onTake={() => setUploadModal(true)}
           />
         </main>
       );
@@ -2012,7 +2356,7 @@ export function QuietcareApp() {
               </li>
             ))}
           </ul>
-          <UploadActions onChoose={() => setUploadModal(true)} onTake={() => upload()} />
+          <UploadActions onChoose={() => setUploadModal(true)} onTake={() => setUploadModal(true)} />
         </main>
       );
       break;
@@ -2381,22 +2725,21 @@ export function QuietcareApp() {
                 Check Connection Status
               </Button>
 
-              {/* Dev / Test mode button for instant local verification */}
               <button
                 type="button"
-                onClick={handleDevConnectTelegram}
+                onClick={handleSkipTelegram}
                 style={{
                   background: "transparent",
                   border: 0,
                   color: "#64748b",
-                  fontSize: 11,
+                  fontSize: 12,
                   textDecoration: "underline",
                   cursor: "pointer",
                   padding: "4px 0",
                   textAlign: "center",
                 }}
               >
-                ⚡ Test Telegram Connect in Demo Mode (Skip external bot)
+                Skip Telegram setup for now
               </button>
             </div>
           </Bottom>

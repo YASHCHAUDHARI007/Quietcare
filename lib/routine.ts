@@ -213,7 +213,7 @@ export function generateDosePacks(
 export function generateDosesForRoutine(
   medicines: Medicine[],
   routine: RoutineSchedule,
-  patientId: string = "patient_meena",
+  patientId: string = "patient_primary",
   existingDoses: Dose[] = []
 ): Dose[] {
   const { datePrefix } = getISTDateParts();

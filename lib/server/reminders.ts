@@ -13,7 +13,7 @@ export class ReminderService {
     const syncedDoses = generateDosesForRoutine(
       state.medicines || [],
       state.routine,
-      state.patient?.id || "patient_meena",
+      state.patient?.id || "patient_primary",
       forceRegenerate ? [] : (state.doses || [])
     );
 
